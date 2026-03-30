@@ -1,11 +1,13 @@
 import Phaser from 'phaser';
+import RAPIER from '@dimforge/rapier2d-compat';
 import {
   CANVAS_WIDTH, CANVAS_HEIGHT, FIELD_RADIUS,
-  COIN_RADIUS, KICKOFF_SPREAD, WIN_GOALS,
+  COIN_RADIUS, WIN_GOALS,
 } from '../config';
-import { getFieldVertices, buildGoals } from '../Field';
 import { GameState, Vec2, GoalPost, PlayerId } from '../types';
 import { GameConfig, DEFAULT_CONFIG } from '../FieldConfig';
+import { LevelDef } from '../LevelDef';
+import { stadiumLevel } from '../levels/stadium';
 import { GameAudio } from '../Audio';
 
 interface Spark {
@@ -27,7 +29,11 @@ const C_GOLD    = 0xffcc00;
 
 export class GameScene extends Phaser.Scene {
   private cfg!: GameConfig;
-  private coins: MatterJS.BodyType[] = [];
+  private level!: LevelDef;
+  private coins: RAPIER.RigidBody[] = [];
+  private rapierWorld!: RAPIER.World;
+  private eventQueue!: RAPIER.EventQueue;
+  private colliderLabels = new Map<number, string>(); // collider handle → 'coin'|'wall'|'obstacle'
   private goals!: [GoalPost, GoalPost];
   private state!: GameState;
 
@@ -65,14 +71,21 @@ export class GameScene extends Phaser.Scene {
   private resultHandled = false;
   private simFrameCount = 0;
   private lastFoulCoinIndex: number | null = null; // preserves red glow after illegal kick settles
+  private pendingGoal: { scorer: PlayerId, isOwnGoal: boolean } | null = null;
 
   constructor() {
     super({ key: 'GameScene' });
   }
 
   create() {
-    this.cfg = this.registry.get('gameConfig') ?? DEFAULT_CONFIG;
-    this.goals = buildGoals(CX, CY, this.cfg);
+    this.cfg   = this.registry.get('gameConfig') ?? DEFAULT_CONFIG;
+    this.level = this.registry.get('level')      ?? stadiumLevel;
+    this.goals = this.level.goals as [GoalPost, GoalPost];
+
+    this.rapierWorld = new RAPIER.World({ x: 0, y: 0 });
+    this.eventQueue = new RAPIER.EventQueue(true);
+    this.colliderLabels = new Map();
+
     this.state = {
       phase: 'kickoff',
       attacker: 0,
@@ -93,7 +106,6 @@ export class GameScene extends Phaser.Scene {
     this.buildWalls();
     this.placeKickoff();
     this.setupInput();
-    this.setupCollisions();
 
     // Menu button
     const menuBtn = this.add.text(CANVAS_WIDTH - 10, CANVAS_HEIGHT - 10, '[ Menu ]', {
@@ -183,9 +195,13 @@ export class GameScene extends Phaser.Scene {
       {
         label: 'Drag',
         get: () => this.cfg.coinDrag,
-        set: (v) => { this.cfg.coinDrag = v; },
-        step: 0.01, min: 0.0, max: 0.5,
-        fmt: (v) => v.toFixed(2),
+        set: (v) => {
+          this.cfg.coinDrag = v;
+          // Apply immediately to all existing coin bodies
+          for (const c of this.coins) c.setLinearDamping(v);
+        },
+        step: 0.5, min: 0.0, max: 30.0,
+        fmt: (v) => v.toFixed(1),
       },
     ];
 
@@ -226,23 +242,44 @@ export class GameScene extends Phaser.Scene {
   // ─── Physics walls ────────────────────────────────────────────────────────────
 
   private buildWalls() {
-    const { sides } = this.cfg.shape;
-    const verts = getFieldVertices(CX, CY, this.cfg);
-    const goalEdges = [0, sides / 2];
-    for (let i = 0; i < sides; i++) {
-      if (goalEdges.includes(i)) continue;
-      this.addWall(verts[i], verts[(i + 1) % sides]);
+    const { boundary, goals, blockers } = this.level;
+    const n = boundary.length;
+
+    // Build a set of edge indices that are goal openings — skip those
+    const goalEdgeMids = new Set<string>();
+    for (const goal of goals) {
+      // Find which boundary edge this goal sits on by matching midpoint proximity
+      for (let i = 0; i < n; i++) {
+        const a = boundary[i], b = boundary[(i + 1) % n];
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        const gMx = (goal.leftBase.x + goal.rightBase.x) / 2;
+        const gMy = (goal.leftBase.y + goal.rightBase.y) / 2;
+        if (Math.hypot(mx - gMx, my - gMy) < 4) {
+          goalEdgeMids.add(i.toString());
+          break;
+        }
+      }
     }
-    for (const goal of this.goals) {
+
+    // Boundary walls (skip goal edges)
+    for (let i = 0; i < n; i++) {
+      if (goalEdgeMids.has(i.toString())) continue;
+      this.addWall(boundary[i], boundary[(i + 1) % n]);
+    }
+
+    // Goal spokes
+    for (const goal of goals) {
       this.addWall(goal.leftBase,  goal.leftTip);
       this.addWall(goal.rightBase, goal.rightTip);
     }
 
-    // Centre obstacle — slightly larger than the decorative circle (r=55)
-    const obs = 70; // half-side of square
-    this.matter.add.rectangle(CX, CY, obs * 2, obs * 2, {
-      isStatic: true, friction: 0, restitution: 1, slop: 0, label: 'obstacle',
-    });
+    // Blockers — each is a closed polygon of walls
+    for (const blocker of blockers) {
+      const m = blocker.length;
+      for (let i = 0; i < m; i++) {
+        this.addWall(blocker[i], blocker[(i + 1) % m]);
+      }
+    }
   }
 
   /**
@@ -253,8 +290,8 @@ export class GameScene extends Phaser.Scene {
    * and close the seam gap between adjacent segments.
    */
   private addWall(a: Vec2, b: Vec2) {
-    // Thick enough that even tiny fast coins can't tunnel through in one step
-    const t = 40;
+    // CCD on coins handles tunneling — walls can be thinner than Matter.js needed
+    const t = 20;
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.hypot(dx, dy);
     const angle = Math.atan2(dy, dx);
@@ -270,39 +307,50 @@ export class GameScene extends Phaser.Scene {
     const cx = midX + outX * (t / 2);
     const cy = midY + outY * (t / 2);
 
-    this.matter.add.rectangle(cx, cy, len + t, t, {
-      isStatic: true, angle,
-      friction: 0, restitution: 1,
-      slop: 0,
-      label: 'wall',
-    });
+    const body = this.rapierWorld.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(cx, cy).setRotation(angle),
+    );
+    const col = this.rapierWorld.createCollider(
+      RAPIER.ColliderDesc.cuboid((len + t) / 2, t / 2)
+        .setRestitution(1.0).setFriction(0.0)
+        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
+      body,
+    );
+    this.colliderLabels.set(col.handle, 'wall');
   }
 
   // ─── Coin placement ───────────────────────────────────────────────────────────
 
   private placeKickoff() {
-    for (const c of this.coins) this.matter.world.remove(c);
+    for (const c of this.coins) this.rapierWorld.removeRigidBody(c);
     this.coins = [];
     this.resetSimState();
     this.kickoffMove = true;
 
-    const dir = this.state.attacker === 0 ? 1 : -1;
-    const baseY = CY + dir * (FIELD_RADIUS * 0.4);
-    const s = KICKOFF_SPREAD;
     const r = this.cfg.coinRadius;
     const jitter = () => (Math.random() - 0.5) * r * 0.2;
 
-    const pts: Vec2[] = [
-      { x: CX + jitter(),             y: baseY + dir * s + jitter() },
-      { x: CX - s * 0.65 + jitter(),  y: baseY - dir * s * 0.5 + jitter() },
-      { x: CX + s * 0.65 + jitter(),  y: baseY - dir * s * 0.5 + jitter() },
-    ];
+    // P1 uses level start positions; P2 gets them mirrored through centre
+    const base = this.level.start;
+    const pts: Vec2[] = this.state.attacker === 0
+      ? base.map(p => ({ x: p.x + jitter(), y: p.y + jitter() }))
+      : base.map(p => ({ x: 2 * CX - p.x + jitter(), y: 2 * CY - p.y + jitter() }));
 
     for (const p of pts) {
-      this.coins.push(this.matter.add.circle(p.x, p.y, r, {
-        restitution: 0.95, friction: 0, frictionAir: this.cfg.coinDrag,
-        slop: 0, label: 'coin',
-      }));
+      const body = this.rapierWorld.createRigidBody(
+        RAPIER.RigidBodyDesc.dynamic()
+          .setTranslation(p.x, p.y)
+          .setLinearDamping(this.cfg.coinDrag)
+          .setCcdEnabled(true),
+      );
+      const col = this.rapierWorld.createCollider(
+        RAPIER.ColliderDesc.ball(r)
+          .setRestitution(0.95).setFriction(0.0)
+          .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
+        body,
+      );
+      this.colliderLabels.set(col.handle, 'coin');
+      this.coins.push(body);
     }
   }
 
@@ -350,6 +398,8 @@ export class GameScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       window.removeEventListener('mousemove', onWindowMove);
       window.removeEventListener('mouseup', onWindowUp);
+      this.eventQueue.free();
+      this.rapierWorld.free();
     });
   }
 
@@ -367,9 +417,9 @@ export class GameScene extends Phaser.Scene {
 
   private coinAt(world: Vec2): number {
     for (let i = 0; i < this.coins.length; i++) {
-      const c = this.coins[i];
-      const dx = (c.position.x as number) - world.x;
-      const dy = (c.position.y as number) - world.y;
+      const pos = this.coins[i].translation();
+      const dx = pos.x - world.x;
+      const dy = pos.y - world.y;
       if (Math.hypot(dx, dy) <= this.cfg.coinRadius * 2.2) return i;
     }
     return -1;
@@ -385,19 +435,21 @@ export class GameScene extends Phaser.Scene {
     if (dist < 5) return;
 
     const power = Math.min(dist, 200);
-    this.matter.body.setVelocity(this.coins[idx], {
-      x: (dx / dist) * power * 0.12 * this.cfg.kickPower,
-      y: (dy / dist) * power * 0.12 * this.cfg.kickPower,
-    });
+    // Rapier velocity is px/s — multiply by 60 to match previous px/frame behaviour
+    const spd = power * 7.2 * this.cfg.kickPower;
+    this.coins[idx].setLinvel({ x: (dx / dist) * spd, y: (dy / dist) * spd }, true);
 
     const others = [0, 1, 2].filter(i => i !== idx);
-    this.splitLineA = { x: this.coins[others[0]].position.x as number, y: this.coins[others[0]].position.y as number };
-    this.splitLineB = { x: this.coins[others[1]].position.x as number, y: this.coins[others[1]].position.y as number };
+    const pA = this.coins[others[0]].translation();
+    const pB = this.coins[others[1]].translation();
+    this.splitLineA = { x: pA.x, y: pA.y };
+    this.splitLineB = { x: pB.x, y: pB.y };
 
     this.state.lastKickedCoinIndex = idx;
     this.state.phase = 'simulating';
     this.splitDetected = false;
     this.resultHandled = false;
+    this.pendingGoal = null;
     this.simFrameCount = 0;
     this.updateUI();
   }
@@ -405,6 +457,8 @@ export class GameScene extends Phaser.Scene {
   // ─── Game loop ────────────────────────────────────────────────────────────────
 
   update(_time: number, delta: number) {
+    this.rapierWorld.step(this.eventQueue);
+    this.processCollisionEvents();
     if (this.state.phase === 'simulating') this.runSimulationChecks();
     // Advance sparks
     const dt = delta / 16.67; // normalise to 60fps
@@ -420,9 +474,9 @@ export class GameScene extends Phaser.Scene {
   private runSimulationChecks() {
     this.simFrameCount++;
     const ki = this.state.lastKickedCoinIndex!;
-    const cur: Vec2[] = this.coins.map(c => ({
-      x: c.position.x as number, y: c.position.y as number,
-    }));
+    const cur: Vec2[] = this.coins.map(c => {
+      const t = c.translation(); return { x: t.x, y: t.y };
+    });
     const prev = this.prevCoinPos;
 
     if (prev.length === this.coins.length && !this.resultHandled) {
@@ -447,21 +501,30 @@ export class GameScene extends Phaser.Scene {
           this.splitDetected = true;
         }
       }
-      // Any coin can score — check all
-      outer: for (let ci = 0; ci < this.coins.length; ci++) {
-        if (!prev[ci]) continue;
-        for (const goal of this.goals) {
-          if (segmentsIntersect(prev[ci], cur[ci], goal.leftTip, goal.rightTip)) {
-            this.resultHandled = true;
-            this.onGoal(goal.scorer, goal.scorer !== this.state.attacker);
-            break outer;
+      // Record first coin to cross a goal — resolved on settlement
+      if (!this.pendingGoal) {
+        outer: for (let ci = 0; ci < this.coins.length; ci++) {
+          if (!prev[ci]) continue;
+          for (const goal of this.goals) {
+            if (segmentsIntersect(prev[ci], cur[ci], goal.leftTip, goal.rightTip)) {
+              this.pendingGoal = { scorer: goal.scorer, isOwnGoal: goal.scorer !== this.state.attacker };
+              break outer;
+            }
           }
         }
       }
       if (!this.resultHandled) {
-        const pos = cur[ki];
-        const maxR = FIELD_RADIUS * Math.max(this.cfg.shape.scaleX, this.cfg.shape.scaleY);
-        if (Math.hypot(pos.x - CX, pos.y - CY) > maxR + COIN_RADIUS * 2) {
+        const maxR = Math.max(...this.level.boundary.map(v => Math.hypot(v.x - CX, v.y - CY))) + COIN_RADIUS * 2;
+        let escaped = false;
+        for (let ci = 0; ci < this.coins.length; ci++) {
+          if (Math.hypot(cur[ci].x - CX, cur[ci].y - CY) > maxR) {
+            // Teleport back to centre so the game stays playable
+            this.coins[ci].setTranslation({ x: CX, y: CY }, true);
+            this.coins[ci].setLinvel({ x: 0, y: 0 }, true);
+            escaped = true;
+          }
+        }
+        if (escaped) {
           this.resultHandled = true;
           this.onFoul();
         }
@@ -477,27 +540,32 @@ export class GameScene extends Phaser.Scene {
 
   private allStopped() {
     return this.coins.every(c => {
-      const v = c.velocity as { x: number; y: number };
-      return Math.hypot(v.x, v.y) < 0.1;
+      if (c.isSleeping()) return true;
+      const v = c.linvel();
+      return Math.hypot(v.x, v.y) < 5; // px/s — Rapier units
     });
   }
 
   private onSettled() {
-    if (this.kickoffMove) {
-      if (this.kickoffHitDetected) {
-        this.kickoffMove = false;
-        this.state.lastKickedCoinIndex = null;
-        this.state.phase = 'playing';
-      } else {
-        this.onFoul();
-        return;
-      }
-    } else if (this.splitDetected) {
-      this.state.phase = 'playing';
-    } else {
+    const isLegal = this.kickoffMove ? this.kickoffHitDetected : this.splitDetected;
+
+    if (!isLegal) {
+      this.pendingGoal = null;
       this.onFoul();
       return;
     }
+
+    if (this.pendingGoal) {
+      const { scorer, isOwnGoal } = this.pendingGoal;
+      this.pendingGoal = null;
+      this.kickoffMove = false;
+      this.onGoal(scorer, isOwnGoal);
+      return;
+    }
+
+    // Legal kick, no goal — continue play
+    this.kickoffMove = false;
+    this.state.phase = 'playing';
     this.updateUI();
   }
 
@@ -529,6 +597,7 @@ export class GameScene extends Phaser.Scene {
     this.lastFoulCoinIndex = this.state.lastKickedCoinIndex; // keep red until rotation
     this.splitDetected = false;
     this.resultHandled = false;
+    this.pendingGoal = null;
     this.kickoffMove = false;
     this.state.lastKickedCoinIndex = null;
     this.updateUI();
@@ -552,36 +621,39 @@ export class GameScene extends Phaser.Scene {
 
   // ─── Collision effects ────────────────────────────────────────────────────────
 
-  private setupCollisions() {
-    this.matter.world.on('collisionstart', (event: any) => {
-      for (const pair of event.pairs) {
-        const { bodyA, bodyB } = pair;
-        const aIsCoin = bodyA.label === 'coin';
-        const bIsCoin = bodyB.label === 'coin';
-        const aIsWall = bodyA.label === 'wall' || bodyA.label === 'obstacle';
-        const bIsWall = bodyB.label === 'wall' || bodyB.label === 'obstacle';
+  private processCollisionEvents() {
+    this.eventQueue.drainCollisionEvents((h1: number, h2: number, started: boolean) => {
+      if (!started) return;
+      const col1 = this.rapierWorld.getCollider(h1);
+      const col2 = this.rapierWorld.getCollider(h2);
+      const label1 = this.colliderLabels.get(h1) ?? '';
+      const label2 = this.colliderLabels.get(h2) ?? '';
+      const body1 = col1.parent();
+      const body2 = col2.parent();
+      if (!body1 || !body2) return;
 
-        if (aIsCoin && bIsCoin) {
-          const spd = Math.hypot(
-            (bodyA.velocity?.x ?? 0) - (bodyB.velocity?.x ?? 0),
-            (bodyA.velocity?.y ?? 0) - (bodyB.velocity?.y ?? 0),
-          );
-          if (spd < 0.5) continue;
-          const mx = ((bodyA.position.x as number) + (bodyB.position.x as number)) / 2;
-          const my = ((bodyA.position.y as number) + (bodyB.position.y as number)) / 2;
-          this.audio.coinClack(Math.min(spd / 12, 1));
-          if (spd > 2) this.emitSparks(mx, my, spd, [0x00ffaa, 0xffffff, 0x00ff44], 14);
-        } else if (aIsCoin && bIsWall) {
-          const spd = Math.hypot(bodyA.velocity?.x ?? 0, bodyA.velocity?.y ?? 0);
-          if (spd < 1) continue;
-          this.audio.wallClick(Math.min(spd / 14, 1));
-          if (spd > 3) this.emitSparks(bodyA.position.x as number, bodyA.position.y as number, spd, [0x0088ff, 0x00ccff], 7);
-        } else if (bIsCoin && aIsWall) {
-          const spd = Math.hypot(bodyB.velocity?.x ?? 0, bodyB.velocity?.y ?? 0);
-          if (spd < 1) continue;
-          this.audio.wallClick(Math.min(spd / 14, 1));
-          if (spd > 3) this.emitSparks(bodyB.position.x as number, bodyB.position.y as number, spd, [0x0088ff, 0x00ccff], 7);
-        }
+      const aIsCoin = label1 === 'coin';
+      const bIsCoin = label2 === 'coin';
+      const aIsWall = label1 === 'wall' || label1 === 'obstacle';
+      const bIsWall = label2 === 'wall' || label2 === 'obstacle';
+
+      if (aIsCoin && bIsCoin) {
+        const va = body1.linvel(), vb = body2.linvel();
+        // Rapier velocity is px/s; scale thresholds accordingly (×60 vs old px/frame)
+        const spd = Math.hypot(va.x - vb.x, va.y - vb.y);
+        if (spd < 30) return;
+        const p1 = body1.translation(), p2 = body2.translation();
+        const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+        this.audio.coinClack(Math.min(spd / 720, 1));
+        if (spd > 120) this.emitSparks(mx, my, spd / 60, [0x00ffaa, 0xffffff, 0x00ff44], 14);
+      } else if ((aIsCoin && bIsWall) || (bIsCoin && aIsWall)) {
+        const coinBody = aIsCoin ? body1 : body2;
+        const v = coinBody.linvel();
+        const spd = Math.hypot(v.x, v.y);
+        if (spd < 60) return;
+        const p = coinBody.translation();
+        this.audio.wallClick(Math.min(spd / 840, 1));
+        if (spd > 180) this.emitSparks(p.x, p.y, spd / 60, [0x0088ff, 0x00ccff], 7);
       }
     });
   }
@@ -650,7 +722,7 @@ export class GameScene extends Phaser.Scene {
   private drawField() {
     const g = this.fieldGfx;
     g.clear();
-    const verts = getFieldVertices(CX, CY, this.cfg).map(v => this.worldToLocal(v.x, v.y));
+    const verts = this.level.boundary.map(v => this.worldToLocal(v.x, v.y));
     const n = verts.length;
 
     // ── Dark fill ──
@@ -673,8 +745,8 @@ export class GameScene extends Phaser.Scene {
     g.fillStyle(C_CYAN, 0.6);
     g.fillCircle(0, 0, 3);
 
-    // ── Centre dividing line ──
-    const hw = FIELD_RADIUS * this.cfg.shape.scaleX;
+    // ── Centre dividing line — span the full field width ──
+    const hw = Math.max(...this.level.boundary.map(v => Math.abs(v.x - CX)));
     g.lineStyle(1, 0xffffff, 0.15);
     g.beginPath(); g.moveTo(-hw, 0); g.lineTo(hw, 0); g.strokePath();
 
@@ -696,14 +768,25 @@ export class GameScene extends Phaser.Scene {
       this.drawGoal(g, this.goals[gi], gi === 0 ? C_CYAN : C_MAGENTA);
     }
 
-    // ── Centre obstacle ──
-    const obs = 70;
-    g.fillStyle(C_DARK, 1);
-    g.fillRect(-obs, -obs, obs * 2, obs * 2);
-    g.lineStyle(6, 0x334455, 0.4);
-    g.strokeRect(-obs, -obs, obs * 2, obs * 2);
-    g.lineStyle(2, 0x446688, 0.9);
-    g.strokeRect(-obs, -obs, obs * 2, obs * 2);
+    // ── Blockers ──
+    for (const blocker of this.level.blockers) {
+      const bverts = blocker.map(v => this.worldToLocal(v.x, v.y));
+      g.fillStyle(C_DARK, 1);
+      g.beginPath();
+      g.moveTo(bverts[0].x, bverts[0].y);
+      for (let i = 1; i < bverts.length; i++) g.lineTo(bverts[i].x, bverts[i].y);
+      g.closePath(); g.fillPath();
+      g.lineStyle(6, 0x334455, 0.4);
+      g.beginPath();
+      g.moveTo(bverts[0].x, bverts[0].y);
+      for (let i = 1; i < bverts.length; i++) g.lineTo(bverts[i].x, bverts[i].y);
+      g.closePath(); g.strokePath();
+      g.lineStyle(2, 0x446688, 0.9);
+      g.beginPath();
+      g.moveTo(bverts[0].x, bverts[0].y);
+      for (let i = 1; i < bverts.length; i++) g.lineTo(bverts[i].x, bverts[i].y);
+      g.closePath(); g.strokePath();
+    }
   }
 
   /** Flood-fill a half of the polygon with a faint tint */
@@ -772,14 +855,10 @@ export class GameScene extends Phaser.Scene {
     if (kickedIdx === null || this.coins.length < 3) return;
 
     const others = [0, 1, 2].filter(i => i !== kickedIdx);
-    const a = this.worldToLocal(
-      this.coins[others[0]].position.x as number,
-      this.coins[others[0]].position.y as number,
-    );
-    const b = this.worldToLocal(
-      this.coins[others[1]].position.x as number,
-      this.coins[others[1]].position.y as number,
-    );
+    const posA = this.coins[others[0]].translation();
+    const posB = this.coins[others[1]].translation();
+    const a = this.worldToLocal(posA.x, posA.y);
+    const b = this.worldToLocal(posB.x, posB.y);
 
     // Animate: regenerate jagged path every frame
     const pts = lightningPath(a, b, 3, 0.38);
@@ -849,8 +928,9 @@ export class GameScene extends Phaser.Scene {
 
     for (let i = 0; i < this.coins.length; i++) {
       const c = this.coins[i];
-      const lx = (c.position.x as number) - CX;
-      const ly = (c.position.y as number) - CY;
+      const pos = c.translation();
+      const lx = pos.x - CX;
+      const ly = pos.y - CY;
       const state = this.coinGlowState(i);
       const pal = GLOW[state];
 
@@ -885,7 +965,8 @@ export class GameScene extends Phaser.Scene {
     if (this.dragCoinIndex < 0) return;
 
     const coin = this.coins[this.dragCoinIndex];
-    const coinLocal = this.worldToLocal(coin.position.x as number, coin.position.y as number);
+    const coinPos = coin.translation();
+    const coinLocal = this.worldToLocal(coinPos.x, coinPos.y);
     const mouseWorld = this.screenToWorld(this.dragScreenCurrent.x, this.dragScreenCurrent.y);
     const mouseLocal = this.worldToLocal(mouseWorld.x, mouseWorld.y);
 

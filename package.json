@@ -25,6 +25,7 @@
     "vite": "^8.0.3"
   },
   "dependencies": {
+    "@dimforge/rapier2d-compat": "^0.19.3",
     "phaser": "^3.90.0"
   }
 }

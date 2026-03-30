@@ -1,7 +1,10 @@
 import Phaser from 'phaser';
+import RAPIER from '@dimforge/rapier2d-compat';
 import { GameScene } from './scenes/GameScene';
 import { MenuScene } from './scenes/MenuScene';
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from './config';
+
+await RAPIER.init();
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -11,16 +14,6 @@ const config: Phaser.Types.Core.GameConfig = {
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
-  },
-  physics: {
-    default: 'matter',
-    matter: {
-      gravity: { x: 0, y: 0 },
-      debug: false,
-      positionIterations: 10,
-      velocityIterations: 10,
-      constraintIterations: 4,
-    },
   },
   scene: [MenuScene, GameScene],
 };
