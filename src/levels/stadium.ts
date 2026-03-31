@@ -2,6 +2,7 @@ import { CANVAS_WIDTH, CANVAS_HEIGHT, FIELD_RADIUS } from '../config';
 import { Vec2, GoalPost } from '../types';
 import { LevelDef } from '../LevelDef';
 
+
 const CX = CANVAS_WIDTH / 2;
 const CY = CANVAS_HEIGHT / 2;
 
@@ -64,6 +65,8 @@ export const stadiumLevel: LevelDef = {
   id: 'stadium',
   label: 'Stadium',
   type: 'field',
+  coinConfig: { radius: 10, kickPower: 1.0, drag: 5.0 },
+  look: 'neon',
   boundary: fieldVerts(),
   blockers: [centreBlocker],
   goals: [buildGoal(0, 0), buildGoal(SIDES / 2, 1)],

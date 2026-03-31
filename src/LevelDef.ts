@@ -2,6 +2,41 @@ import { Vec2, GoalPost } from './types';
 
 export type LevelType = 'field' | 'course';
 
+// ─── Coin configuration ───────────────────────────────────────────────────────
+
+export interface CoinConfig {
+  radius: number;
+  kickPower: number;
+  drag: number;
+}
+
+// ─── Look / theme ─────────────────────────────────────────────────────────────
+
+export type CoinRendering    = 'glow' | 'drop-shadow';
+export type CollisionFX      = 'sparks' | 'glow' | 'none';
+export type IntersectionLine = 'electric' | 'straight' | 'none';
+
+export interface LookDef {
+  coinRendering:    CoinRendering;
+  collisionFX:      CollisionFX;
+  intersectionLine: IntersectionLine;
+}
+
+export type LookName = 'neon' | 'ambient';
+
+export const LOOKS: Record<LookName, LookDef> = {
+  neon: {
+    coinRendering:    'glow',
+    collisionFX:      'sparks',
+    intersectionLine: 'electric',
+  },
+  ambient: {
+    coinRendering:    'drop-shadow',
+    collisionFX:      'glow',
+    intersectionLine: 'straight',
+  },
+};
+
 export interface EllipseDef {
   x: number;
   y: number;
@@ -26,4 +61,8 @@ export interface LevelDef {
   start: [Vec2, Vec2, Vec2];
   /** Optional field image replacing procedural rendering (relative URL, e.g. /field-images/stadium.png) */
   imageUrl?: string;
+  /** Coin physics — overrides menu settings on load */
+  coinConfig?: CoinConfig;
+  /** Visual theme */
+  look?: LookName;
 }

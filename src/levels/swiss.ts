@@ -2,9 +2,10 @@ import { LevelDef } from '../LevelDef';
 
 export const swissLevel: LevelDef = {
   id: 'swiss',
-  label: 'swiss',
+  label: 'Swiss',
   type: 'field',
   imageUrl: '/field-images/swiss.png',
+  look: 'ambient',
   boundary: [
     { x: 300, y: 40 },
     { x: 8, y: 37 },

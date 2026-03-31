@@ -6,7 +6,7 @@ import {
 } from '../config';
 import { GameState, Vec2, GoalPost, PlayerId } from '../types';
 import { GameConfig, DEFAULT_CONFIG } from '../FieldConfig';
-import { LevelDef, EllipseDef } from '../LevelDef';
+import { LevelDef, EllipseDef, LookDef, LOOKS } from '../LevelDef';
 import { stadiumLevel } from '../levels/stadium';
 import { GameAudio } from '../Audio';
 
@@ -36,6 +36,12 @@ export class GameScene extends Phaser.Scene {
   private colliderLabels = new Map<number, string>(); // collider handle → 'coin'|'wall'|'obstacle'
   private goals!: [GoalPost, GoalPost];
   private state!: GameState;
+
+  // Visual theme
+  private look!: LookDef;
+
+  // Collision glow pulses (for 'ambient' collisionFX: 'glow')
+  private glowPulses: { x: number; y: number; life: number; maxLife: number; color: number }[] = [];
 
   // Field image (optional, replaces procedural rendering)
   private fieldImg: Phaser.GameObjects.Image | null = null;
@@ -98,9 +104,18 @@ export class GameScene extends Phaser.Scene {
   }
 
   create() {
-    this.cfg   = this.registry.get('gameConfig') ?? DEFAULT_CONFIG;
-    this.level = this.registry.get('level')      ?? stadiumLevel;
+    this.cfg   = { ...(this.registry.get('gameConfig') ?? DEFAULT_CONFIG) };
+    this.level = this.registry.get('level') ?? stadiumLevel;
     this.goals = this.level.goals as [GoalPost, GoalPost];
+
+    // Apply level coin config over menu settings
+    if (this.level.coinConfig) {
+      this.cfg.coinRadius = this.level.coinConfig.radius;
+      this.cfg.kickPower  = this.level.coinConfig.kickPower;
+      this.cfg.coinDrag   = this.level.coinConfig.drag;
+    }
+
+    this.look = LOOKS[this.level.look ?? 'neon'];
 
     this.rapierWorld = new RAPIER.World({ x: 0, y: 0 });
     this.eventQueue = new RAPIER.EventQueue(true);
@@ -560,7 +575,7 @@ export class GameScene extends Phaser.Scene {
     this.rapierWorld.step(this.eventQueue);
     this.processCollisionEvents();
     if (this.state.phase === 'simulating') this.runSimulationChecks();
-    // Advance sparks
+    // Advance sparks and glow pulses
     const dt = delta / 16.67; // normalise to 60fps
     this.sparks = this.sparks.filter(s => {
       s.x += s.vx * dt; s.y += s.vy * dt;
@@ -568,6 +583,7 @@ export class GameScene extends Phaser.Scene {
       s.life -= delta;
       return s.life > 0;
     });
+    this.glowPulses = this.glowPulses.filter(p => { p.life -= delta; return p.life > 0; });
     this.draw();
   }
 
@@ -745,7 +761,7 @@ export class GameScene extends Phaser.Scene {
         const p1 = body1.translation(), p2 = body2.translation();
         const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
         this.audio.coinClack(Math.min(spd / 720, 1));
-        if (spd > 120) this.emitSparks(mx, my, spd / 60, [0x00ffaa, 0xffffff, 0x00ff44], 14);
+        if (spd > 120) this.emitCollisionFX(mx, my, spd, 'coin');
       } else if ((aIsCoin && bIsWall) || (bIsCoin && aIsWall)) {
         const coinBody = aIsCoin ? body1 : body2;
         const v = coinBody.linvel();
@@ -753,44 +769,72 @@ export class GameScene extends Phaser.Scene {
         if (spd < 60) return;
         const p = coinBody.translation();
         this.audio.wallClick(Math.min(spd / 840, 1));
-        if (spd > 180) this.emitSparks(p.x, p.y, spd / 60, [0x0088ff, 0x00ccff], 7);
+        if (spd > 180) this.emitCollisionFX(p.x, p.y, spd, 'wall');
       }
     });
   }
 
-  private emitSparks(wx: number, wy: number, speed: number, colors: number[], count: number) {
-    if (this.sparks.length > 80) return; // cap total
-    const life = 180 + speed * 12;
-    for (let i = 0; i < count; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const spd = (0.4 + Math.random() * 0.6) * speed * 0.4;
-      this.sparks.push({
-        x: wx, y: wy,
-        vx: Math.cos(angle) * spd,
-        vy: Math.sin(angle) * spd,
-        life, maxLife: life,
-        color: colors[Math.floor(Math.random() * colors.length)],
-      });
+  private emitCollisionFX(wx: number, wy: number, spd: number, source: 'coin' | 'wall') {
+    const fx = this.look.collisionFX;
+    if (fx === 'none') return;
+
+    if (fx === 'sparks') {
+      if (this.sparks.length > 80) return;
+      const colors = source === 'coin'
+        ? [0x00ffaa, 0xffffff, 0x00ff44]
+        : [0x0088ff, 0x00ccff];
+      const count = source === 'coin' ? 14 : 7;
+      const speed = spd / 60;
+      const life = 180 + speed * 12;
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const s = (0.4 + Math.random() * 0.6) * speed * 0.4;
+        this.sparks.push({
+          x: wx, y: wy,
+          vx: Math.cos(angle) * s,
+          vy: Math.sin(angle) * s,
+          life, maxLife: life,
+          color: colors[Math.floor(Math.random() * colors.length)],
+        });
+      }
+    } else if (fx === 'glow') {
+      const color = source === 'coin' ? 0x00ffaa : 0x4499ff;
+      const life = 300 + (spd / 60) * 8;
+      this.glowPulses.push({ x: wx, y: wy, life, maxLife: life, color });
     }
   }
 
-  private drawSparks() {
+  private drawCollisionFX() {
     const g = this.sparkGfx;
     g.clear();
+
+    // Sparks
     for (const s of this.sparks) {
       const t = s.life / s.maxLife;
       const alpha = t * t;
       const local = this.worldToLocal(s.x, s.y);
-      // Draw as a short streak back along velocity
       const trailLen = Math.hypot(s.vx, s.vy) * 1.5 + 2;
       const vLen = Math.hypot(s.vx, s.vy) || 1;
       const tx = local.x - (s.vx / vLen) * trailLen;
       const ty = local.y - (s.vy / vLen) * trailLen;
       g.lineStyle(1.5, s.color, alpha);
       g.beginPath(); g.moveTo(local.x, local.y); g.lineTo(tx, ty); g.strokePath();
-      // Bright tip
       g.fillStyle(0xffffff, alpha * 0.8);
       g.fillCircle(local.x, local.y, 1.2);
+    }
+
+    // Glow pulses
+    for (const p of this.glowPulses) {
+      const t = p.life / p.maxLife;
+      const alpha = t * (1 - t) * 4; // ramps up then fades
+      const local = this.worldToLocal(p.x, p.y);
+      const radius = 20 + (1 - t) * 40;
+      g.lineStyle(12, p.color, alpha * 0.25);
+      g.strokeCircle(local.x, local.y, radius);
+      g.lineStyle(4, p.color, alpha * 0.6);
+      g.strokeCircle(local.x, local.y, radius * 0.55);
+      g.fillStyle(p.color, alpha * 0.15);
+      g.fillCircle(local.x, local.y, radius);
     }
   }
 
@@ -813,7 +857,7 @@ export class GameScene extends Phaser.Scene {
   private draw() {
     this.drawField();
     this.drawSplitLine();
-    this.drawSparks();
+    this.drawCollisionFX();
     this.drawCoins();
     if (this.dragging) this.drawDrag();
     else this.dragGfx.clear();
@@ -993,26 +1037,32 @@ export class GameScene extends Phaser.Scene {
     const a = this.worldToLocal(posA.x, posA.y);
     const b = this.worldToLocal(posB.x, posB.y);
 
-    // Animate: regenerate jagged path every frame
-    const pts = lightningPath(a, b, 3, 0.38);
+    const lineStyle = this.look.intersectionLine;
+    if (lineStyle === 'none') return;
 
-    // Outer glow
-    g.lineStyle(10, 0x00ff88, 0.1);
-    strokePath(g, pts);
-    // Mid glow
-    g.lineStyle(4, 0x00ff88, 0.35);
-    strokePath(g, pts);
-    // Core
-    g.lineStyle(1.2, 0xeeffee, 0.95);
-    strokePath(g, pts);
-
-    // End nodes — pulsing circle
-    const pulse = 0.6 + 0.4 * Math.sin(this.time.now / 80);
-    for (const pt of [a, b]) {
-      g.lineStyle(2, 0x00ff88, 0.9 * pulse);
-      g.strokeCircle(pt.x, pt.y, 5 + pulse * 2);
-      g.fillStyle(0x00ff88, pulse * 0.7);
-      g.fillCircle(pt.x, pt.y, 3);
+    if (lineStyle === 'electric') {
+      const pts = lightningPath(a, b, 3, 0.38);
+      g.lineStyle(10, 0x00ff88, 0.1);
+      strokePath(g, pts);
+      g.lineStyle(4, 0x00ff88, 0.35);
+      strokePath(g, pts);
+      g.lineStyle(1.2, 0xeeffee, 0.95);
+      strokePath(g, pts);
+      const pulse = 0.6 + 0.4 * Math.sin(this.time.now / 80);
+      for (const pt of [a, b]) {
+        g.lineStyle(2, 0x00ff88, 0.9 * pulse);
+        g.strokeCircle(pt.x, pt.y, 5 + pulse * 2);
+        g.fillStyle(0x00ff88, pulse * 0.7);
+        g.fillCircle(pt.x, pt.y, 3);
+      }
+    } else {
+      // straight
+      g.lineStyle(1.5, 0x00ff88, 0.5);
+      g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.strokePath();
+      for (const pt of [a, b]) {
+        g.fillStyle(0x00ff88, 0.6);
+        g.fillCircle(pt.x, pt.y, 3);
+      }
     }
   }
 
@@ -1053,7 +1103,7 @@ export class GameScene extends Phaser.Scene {
     const g = this.coinGfx;
     g.clear();
 
-    const GLOW: Record<string, { glow: number; body: number; rim: number }> = {
+    const PAL: Record<string, { glow: number; body: number; rim: number }> = {
       green: { glow: 0x00ff44, body: 0xccffdd, rim: 0x00ff44 },
       blue:  { glow: 0x0088ff, body: 0xaaccff, rim: 0x0088ff },
       red:   { glow: 0xff2200, body: 0xffcccc, rim: 0xff2200 },
@@ -1064,20 +1114,21 @@ export class GameScene extends Phaser.Scene {
       const pos = c.translation();
       const lx = pos.x - CX;
       const ly = pos.y - CY;
-      const state = this.coinGlowState(i);
-      const pal = GLOW[state];
-
+      const glowState = this.coinGlowState(i);
+      const pal = PAL[glowState];
       const r = this.cfg.coinRadius;
 
-      // Outer glow
-      g.lineStyle(14, pal.glow, 0.08);
-      g.strokeCircle(lx, ly, r + 8);
-      g.lineStyle(7, pal.glow, 0.22);
-      g.strokeCircle(lx, ly, r + 4);
-
-      // Shadow
-      g.fillStyle(0x000000, 0.4);
-      g.fillCircle(lx + 3, ly + 4, r);
+      if (this.look.coinRendering === 'glow') {
+        // Outer glow rings
+        g.lineStyle(14, pal.glow, 0.08);
+        g.strokeCircle(lx, ly, r + 8);
+        g.lineStyle(7, pal.glow, 0.22);
+        g.strokeCircle(lx, ly, r + 4);
+      } else {
+        // Drop shadow
+        g.fillStyle(0x000000, 0.45);
+        g.fillCircle(lx + 4, ly + 5, r);
+      }
 
       // Body
       g.fillStyle(pal.body, 1);
@@ -1086,8 +1137,9 @@ export class GameScene extends Phaser.Scene {
       g.fillStyle(0xffffff, 0.55);
       g.fillCircle(lx - 4, ly - 4, r * 0.45);
 
-      // Rim
-      g.lineStyle(2, pal.rim, 0.9);
+      // Rim — subtle for drop-shadow, bright for glow
+      const rimAlpha = this.look.coinRendering === 'glow' ? 0.9 : 0.4;
+      g.lineStyle(2, pal.rim, rimAlpha);
       g.strokeCircle(lx, ly, r);
     }
   }
@@ -1113,29 +1165,47 @@ export class GameScene extends Phaser.Scene {
     const alpha = 0.3 + t * 0.7;
     const nx = dx / dist, ny = dy / dist;
 
-    // ── Pull-back indicator: faint electric line from mouse to coin ──
-    const pullPts = lightningPath(mouseLocal, coinLocal, 2, 0.25);
-    g.lineStyle(3, 0xff4400, 0.08 + t * 0.12);
-    strokePath(g, pullPts);
-    g.lineStyle(1, 0xff6600, 0.2 + t * 0.25);
-    strokePath(g, pullPts);
-
-    // ── Kick direction: bright lightning bolt forward from coin ──
     const arrowLen = t * 80 + 15;
     const tip = { x: coinLocal.x + nx * arrowLen, y: coinLocal.y + ny * arrowLen };
+    const electric = this.look.intersectionLine !== 'straight';
 
-    // Draw 2 offset bolts for a thicker electric look
-    for (let pass = 0; pass < 2; pass++) {
-      const boltPts = lightningPath(coinLocal, tip, 3, 0.3);
-      g.lineStyle(8,   C_CYAN, 0.05 * alpha);
-      strokePath(g, boltPts);
-      g.lineStyle(3,   C_CYAN, 0.25 * alpha);
-      strokePath(g, boltPts);
-      g.lineStyle(1.2, 0xffffff, 0.8 * alpha);
-      strokePath(g, boltPts);
+    if (electric) {
+      // ── Pull-back: faint electric line from mouse to coin ──
+      const pullPts = lightningPath(mouseLocal, coinLocal, 2, 0.25);
+      g.lineStyle(3, 0xff4400, 0.08 + t * 0.12);
+      strokePath(g, pullPts);
+      g.lineStyle(1, 0xff6600, 0.2 + t * 0.25);
+      strokePath(g, pullPts);
+
+      // ── Kick direction: lightning bolt ──
+      for (let pass = 0; pass < 2; pass++) {
+        const boltPts = lightningPath(coinLocal, tip, 3, 0.3);
+        g.lineStyle(8,   C_CYAN, 0.05 * alpha); strokePath(g, boltPts);
+        g.lineStyle(3,   C_CYAN, 0.25 * alpha); strokePath(g, boltPts);
+        g.lineStyle(1.2, 0xffffff, 0.8 * alpha); strokePath(g, boltPts);
+      }
+      // Energy nodes
+      const nodeCount = Math.floor(t * 4) + 1;
+      for (let i = 0; i < nodeCount; i++) {
+        const frac = (i + 1) / (nodeCount + 1);
+        g.fillStyle(0xffffff, (0.5 + Math.random() * 0.5) * alpha);
+        g.fillCircle(
+          coinLocal.x + nx * arrowLen * frac + (Math.random() - 0.5) * 4,
+          coinLocal.y + ny * arrowLen * frac + (Math.random() - 0.5) * 4,
+          1.5,
+        );
+      }
+    } else {
+      // ── Pull-back: simple line ──
+      g.lineStyle(1.5, 0xff6600, 0.2 + t * 0.3);
+      g.beginPath(); g.moveTo(mouseLocal.x, mouseLocal.y); g.lineTo(coinLocal.x, coinLocal.y); g.strokePath();
+
+      // ── Kick direction: straight arrow ──
+      g.lineStyle(2, C_CYAN, 0.5 * alpha);
+      g.beginPath(); g.moveTo(coinLocal.x, coinLocal.y); g.lineTo(tip.x, tip.y); g.strokePath();
     }
 
-    // Arrowhead
+    // Arrowhead (both styles)
     const perpX = -ny * (6 + t * 4), perpY = nx * (6 + t * 4);
     g.fillStyle(0xffffff, alpha);
     g.fillTriangle(
@@ -1143,21 +1213,9 @@ export class GameScene extends Phaser.Scene {
       tip.x - nx * 14 + perpX, tip.y - ny * 14 + perpY,
       tip.x - nx * 14 - perpX, tip.y - ny * 14 - perpY,
     );
-    // Tip glow
-    g.lineStyle(6, C_CYAN, 0.4 * alpha);
-    g.strokeCircle(tip.x, tip.y, 5 + t * 4);
-
-    // Energy nodes along the bolt — small bright dots at random positions
-    const nodeCount = Math.floor(t * 4) + 1;
-    for (let i = 0; i < nodeCount; i++) {
-      const frac = (i + 1) / (nodeCount + 1);
-      const flicker = 0.5 + Math.random() * 0.5;
-      g.fillStyle(0xffffff, flicker * alpha);
-      g.fillCircle(
-        coinLocal.x + nx * arrowLen * frac + (Math.random() - 0.5) * 4,
-        coinLocal.y + ny * arrowLen * frac + (Math.random() - 0.5) * 4,
-        1.5,
-      );
+    if (electric) {
+      g.lineStyle(6, C_CYAN, 0.4 * alpha);
+      g.strokeCircle(tip.x, tip.y, 5 + t * 4);
     }
   }
 }

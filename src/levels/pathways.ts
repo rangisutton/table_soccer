@@ -1,8 +1,8 @@
 import { LevelDef } from '../LevelDef';
 
-export const wideGoalLevel: LevelDef = {
-  id: 'wide-goal',
-  label: 'Wide Goal',
+export const pathwaysLevel: LevelDef = {
+  id: 'pathways',
+  label: 'Pathways',
   type: 'field',
   boundary: [
     { x: 300, y: 20 },
@@ -47,12 +47,12 @@ export const wideGoalLevel: LevelDef = {
   goals: [
     {
       leftBase:  { x: 500, y: 20 },  rightBase: { x: 300, y: 20 },
-      leftTip:   { x: 500, y: 43 },   rightTip:  { x: 300, y: 43 },
+      leftTip:   { x: 500, y: 43 },  rightTip:  { x: 300, y: 43 },
       scorer: 0,
     },
     {
       leftBase:  { x: 300, y: 780 },  rightBase: { x: 500, y: 780 },
-      leftTip:   { x: 300, y: 757 },   rightTip:  { x: 500, y: 757 },
+      leftTip:   { x: 300, y: 757 },  rightTip:  { x: 500, y: 757 },
       scorer: 1,
     },
   ],
@@ -63,4 +63,4 @@ export const wideGoalLevel: LevelDef = {
   ],
 };
 
-export default wideGoalLevel;
+export default pathwaysLevel;
