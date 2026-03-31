@@ -4,6 +4,8 @@ const GRID = 20;
 const HANDLE_R = 7;
 const EDGE_HIT = 10; // px — distance to register a click as "on an edge"
 
+let exportMode = false;
+
 interface Vec2 { x: number; y: number; }
 interface EllipseDef { x: number; y: number; rx: number; ry: number; angle: number; }
 
@@ -63,6 +65,7 @@ const state = {
   drag: null as DragTarget | null,
   snapGrid: true,
   levelName: 'My Field',
+  imageUrl: null as string | null,
 };
 
 // ─── Computed geometry ────────────────────────────────────────────────────────
@@ -186,10 +189,11 @@ function findBlockerEdgeHit(p: Vec2, polyIdx: number): { insertAt: number; point
 
 function draw() {
   ctx.clearRect(0, 0, CW, CH);
-  ctx.fillStyle = '#010118';
-  ctx.fillRect(0, 0, CW, CH);
-
-  drawGrid();
+  if (!exportMode) {
+    ctx.fillStyle = '#010118';
+    ctx.fillRect(0, 0, CW, CH);
+    drawGrid();
+  }
 
   const boundary = fullBoundary();
   if (boundary.length >= 4) {
@@ -198,15 +202,19 @@ function draw() {
     drawBoundaryBorder(boundary);
   }
 
-  drawSeamEdges();
-  drawMirrorHalf();
-  drawUserHalf();
+  if (!exportMode) {
+    drawSeamEdges();
+    drawMirrorHalf();
+    drawUserHalf();
+  }
   drawEllipses();
   drawBlockers();
   drawGoals();
-  if (boundary.length >= 4) drawStartCoins();
-  drawCentreLines();
-  drawHandles();
+  if (!exportMode && boundary.length >= 4) drawStartCoins();
+  if (!exportMode) {
+    drawCentreLines();
+    drawHandles();
+  }
 }
 
 function drawGrid() {
@@ -326,9 +334,11 @@ function drawGoals() {
     ctx.strokeStyle = '#ffcc0077'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(g.leftTip.x, g.leftTip.y); ctx.lineTo(g.rightTip.x, g.rightTip.y); ctx.stroke();
   }
-  const goalCentre = lerp2(seams[0][0], seams[0][1], state.goal.t);
-  ctx.strokeStyle = '#ffcc00'; ctx.fillStyle = '#ffcc0033'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(goalCentre.x, goalCentre.y, 9, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  if (!exportMode) {
+    const goalCentre = lerp2(seams[0][0], seams[0][1], state.goal.t);
+    ctx.strokeStyle = '#ffcc00'; ctx.fillStyle = '#ffcc0033'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(goalCentre.x, goalCentre.y, 9, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
 }
 
 function drawEllipses() {
@@ -351,24 +361,27 @@ function drawEllipses() {
     ctx.setLineDash([]);
     ctx.restore();
     // Draw original
+    const selActive = isSel && !exportMode;
     ctx.save();
     ctx.translate(e.x, e.y);
     ctx.rotate(e.angle);
     ctx.beginPath();
     ctx.ellipse(0, 0, e.rx, e.ry, 0, 0, Math.PI * 2);
-    ctx.fillStyle = isSel ? 'rgba(0,200,255,0.08)' : 'rgba(3,3,32,0.85)';
+    ctx.fillStyle = selActive ? 'rgba(0,200,255,0.08)' : 'rgba(3,3,32,0.85)';
     ctx.fill();
-    ctx.strokeStyle = isSel ? '#00ccff' : '#446688';
-    ctx.lineWidth = isSel ? 2 : 1.5;
+    ctx.strokeStyle = selActive ? '#00ccff' : '#446688';
+    ctx.lineWidth = selActive ? 2 : 1.5;
     ctx.stroke();
     ctx.restore();
-    // Centre handle
-    ctx.strokeStyle = isSel ? '#00ccff' : '#334466';
-    ctx.fillStyle   = isSel ? '#00ccff33' : '#33446622';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(e.x, e.y, 5, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
+    if (!exportMode) {
+      // Centre handle
+      ctx.strokeStyle = selActive ? '#00ccff' : '#334466';
+      ctx.fillStyle   = selActive ? '#00ccff33' : '#33446622';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, 5, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    }
   }
 }
 
@@ -828,7 +841,7 @@ function exportTS(): string {
 export const ${ident}: LevelDef = {
   id: '${id}',
   label: '${name}',
-  type: 'field',
+  type: 'field',${state.imageUrl ? `\n  imageUrl: '${state.imageUrl}',` : ''}
   boundary: [
 ${bLines}
   ],
@@ -857,6 +870,44 @@ export default ${ident};
 `;
 }
 
+async function exportImage() {
+  const slug = toSlug(state.levelName || 'my-field');
+  if (!slug) { setStatus('Enter a level name first', 'error'); return; }
+  const filename = slug + '.png';
+
+  // Render field without editor UI on the main 800×800 canvas
+  exportMode = true;
+  draw();
+  exportMode = false;
+
+  // Scale to 1024×1024
+  const off = document.createElement('canvas');
+  off.width = 1024; off.height = 1024;
+  const octx = off.getContext('2d')!;
+  octx.drawImage(canvas, 0, 0, 1024, 1024);
+  const data = off.toDataURL('image/png');
+
+  setStatus('Exporting…', 'info');
+  try {
+    const res = await fetch('/export-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, data }),
+    });
+    const json = await res.json();
+    if (json.ok) {
+      state.imageUrl = `/field-images/${filename}`;
+      save();
+      setStatus(`Template: public/field-images/templates/${filename}`, 'ok');
+    } else {
+      setStatus(`Error: ${json.error}`, 'error');
+    }
+  } catch {
+    setStatus('Export failed — is dev server running?', 'error');
+  }
+  draw(); // restore normal view
+}
+
 // ─── Persistence ──────────────────────────────────────────────────────────────
 
 function editorStateForSave() {
@@ -867,6 +918,7 @@ function editorStateForSave() {
     ellipses: state.ellipses,
     start: state.start,
     levelName: state.levelName,
+    imageUrl: state.imageUrl,
   };
 }
 
@@ -878,6 +930,7 @@ function applyState(s: ReturnType<typeof editorStateForSave>) {
   state.levelName  = s.levelName  ?? 'My Field';
   state.selectedBlockerIdx = null;
   state.ellipses   = (s as any).ellipses   ?? [];
+  state.imageUrl   = (s as any).imageUrl   ?? null;
   state.selectedEllipseIdx = null;
   state.activeBlocker = null;
   (document.getElementById('levelName') as HTMLInputElement).value = state.levelName;
@@ -895,6 +948,8 @@ function loadSaved() {
   if (!raw) return;
   try { applyState(JSON.parse(raw)); } catch { /* ignore corrupt storage */ }
 }
+
+document.getElementById('btnExportImage')!.addEventListener('click', () => exportImage());
 
 document.getElementById('btnLoad')!.addEventListener('click', async () => {
   const slug = toSlug(state.levelName || 'my-field');

@@ -37,6 +37,10 @@ export class GameScene extends Phaser.Scene {
   private goals!: [GoalPost, GoalPost];
   private state!: GameState;
 
+  // Field image (optional, replaces procedural rendering)
+  private fieldImg: Phaser.GameObjects.Image | null = null;
+  private showFieldOverlay = false;
+
   // Rotatable container
   private gameContainer!: Phaser.GameObjects.Container;
   private fieldGfx!: Phaser.GameObjects.Graphics;
@@ -83,6 +87,16 @@ export class GameScene extends Phaser.Scene {
     super({ key: 'GameScene' });
   }
 
+  preload() {
+    const level: LevelDef = this.registry.get('level') ?? stadiumLevel;
+    if (level.imageUrl) {
+      const key = `field_img_${level.id}`;
+      this.textures.remove(key); // force reload in case image was updated
+      this.load.on('loaderror', () => { /* modified image not yet placed — fall back to procedural */ });
+      this.load.image(key, level.imageUrl);
+    }
+  }
+
   create() {
     this.cfg   = this.registry.get('gameConfig') ?? DEFAULT_CONFIG;
     this.level = this.registry.get('level')      ?? stadiumLevel;
@@ -108,6 +122,26 @@ export class GameScene extends Phaser.Scene {
     this.coinGfx  = this.add.graphics();
     this.dragGfx  = this.add.graphics();
     this.gameContainer.add([this.fieldGfx, this.splitGfx, this.sparkGfx, this.coinGfx, this.dragGfx]);
+
+    // Field image — sits behind everything; hides procedural rendering
+    const imgKey = `field_img_${this.level.id}`;
+    if (this.level.imageUrl && this.textures.exists(imgKey)) {
+      this.fieldImg = this.add.image(0, 0, imgKey)
+        .setOrigin(0.5, 0.5)
+        .setDisplaySize(CANVAS_WIDTH, CANVAS_HEIGHT);
+      this.gameContainer.addAt(this.fieldImg, 0);
+      this.fieldGfx.setVisible(false);
+    } else {
+      this.fieldImg = null;
+    }
+
+    // Tab toggles procedural overlay back on top of the image
+    this.input.keyboard?.on('keydown-TAB', (event: KeyboardEvent) => {
+      event.preventDefault();
+      if (!this.fieldImg) return;
+      this.showFieldOverlay = !this.showFieldOverlay;
+      this.fieldGfx.setVisible(this.showFieldOverlay);
+    });
 
     this.buildWalls();
     this.placeKickoff();
@@ -788,6 +822,7 @@ export class GameScene extends Phaser.Scene {
   private drawField() {
     const g = this.fieldGfx;
     g.clear();
+    if (!g.visible) return;
     const verts = this.level.boundary.map(v => this.worldToLocal(v.x, v.y));
     const n = verts.length;
 
@@ -803,13 +838,6 @@ export class GameScene extends Phaser.Scene {
     // top half: polygon vertices with localY < 0, bridged at Y=0
     this.drawHalfTint(g, verts, true,  C_CYAN,    0.07);
     this.drawHalfTint(g, verts, false, C_MAGENTA, 0.07);
-
-    // ── Centre circle ──
-    g.lineStyle(1.5, C_CYAN, 0.5);
-    g.strokeCircle(0, 0, 55);
-    // dot at center
-    g.fillStyle(C_CYAN, 0.6);
-    g.fillCircle(0, 0, 3);
 
     // ── Centre dividing line — span the full field width ──
     const hw = Math.max(...this.level.boundary.map(v => Math.abs(v.x - CX)));

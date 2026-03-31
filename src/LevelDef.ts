@@ -24,4 +24,6 @@ export interface LevelDef {
   goals: GoalPost[];
   /** Initial coin positions [kicked, otherA, otherB] */
   start: [Vec2, Vec2, Vec2];
+  /** Optional field image replacing procedural rendering (relative URL, e.g. /field-images/stadium.png) */
+  imageUrl?: string;
 }
