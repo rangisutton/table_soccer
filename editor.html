@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Table Soccer — Level Editor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      display: flex; height: 100vh;
+      background: #010112; color: #aabbcc;
+      font-family: monospace; font-size: 13px; overflow: hidden;
+    }
+    #sidebar {
+      width: 230px; min-width: 230px;
+      background: #050520; border-right: 1px solid #112233;
+      padding: 12px; display: flex; flex-direction: column;
+      gap: 8px; overflow-y: auto;
+    }
+    #canvas-wrap {
+      flex: 1; display: flex; align-items: center;
+      justify-content: center; overflow: hidden; background: #020215;
+    }
+    canvas { max-width: 100%; max-height: 100vh; aspect-ratio: 1; cursor: crosshair; }
+    h2 { color: #00ffee; font-size: 15px; }
+    h3 { color: #446688; font-size: 10px; text-transform: uppercase; letter-spacing: 2px; margin-top: 2px; }
+    .section { border-top: 1px solid #112233; padding-top: 8px; display: flex; flex-direction: column; gap: 5px; }
+    .mode-btn {
+      display: block; width: 100%; padding: 5px 8px;
+      background: #0a1a2a; border: 1px solid #224466; color: #7799aa;
+      cursor: pointer; font-family: monospace; font-size: 12px; text-align: left;
+    }
+    .mode-btn.active { background: #001a33; border-color: #00ffee; color: #00ffee; }
+    .mode-btn:hover:not(.active) { border-color: #446688; color: #aaccdd; }
+    .row { display: flex; align-items: center; gap: 6px; }
+    label { flex: 1; color: #778899; font-size: 11px; }
+    input[type=range] { flex: 1; min-width: 0; }
+    input[type=text] {
+      background: #0a1a2a; border: 1px solid #224466; color: #ffffff;
+      padding: 4px 6px; font-family: monospace; font-size: 12px; width: 100%;
+    }
+    .val { width: 36px; text-align: right; color: #ffffff; font-size: 11px; flex-shrink: 0; }
+    .btn {
+      padding: 7px 10px; background: #001122; border: 1px solid #00ffee;
+      color: #00ffee; cursor: pointer; font-family: monospace; font-size: 12px; width: 100%;
+    }
+    .btn:hover { background: #002244; }
+    .btn-warn { border-color: #ff4422; color: #ff4422; }
+    .btn-warn:hover { background: #220800; }
+    textarea {
+      width: 100%; height: 90px; background: #020210; border: 1px solid #224466;
+      color: #88bbcc; font-family: monospace; font-size: 10px; padding: 4px; resize: vertical;
+    }
+    .hint { color: #445566; font-size: 10px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+<div id="sidebar">
+  <h2>Level Editor</h2>
+
+  <div>
+    <div style="color:#778899;font-size:11px;margin-bottom:3px;">Level name</div>
+    <input type="text" id="levelName" value="My Field" />
+  </div>
+
+  <div class="section">
+    <h3>Mode</h3>
+    <button class="mode-btn active" id="btn-boundary">[ Boundary ]</button>
+    <button class="mode-btn" id="btn-blocker">[ Blocker ]</button>
+    <button class="btn btn-warn" id="btnDeleteBlocker" disabled style="opacity:0.3;font-size:11px;padding:4px 8px;">Delete selected blocker</button>
+    <button class="mode-btn" id="btn-ellipse">[ Ellipse ]</button>
+    <button class="btn btn-warn" id="btnDeleteEllipse" disabled style="opacity:0.3;font-size:11px;padding:4px 8px;">Delete ellipse</button>
+    <button class="mode-btn" id="btn-start">[ Start Coins ]</button>
+  </div>
+
+  <div class="section">
+    <h3>Goal</h3>
+    <div class="row">
+      <label>Position</label>
+      <input type="range" id="goalT" min="10" max="90" value="50" />
+      <span class="val" id="goalTVal">50%</span>
+    </div>
+    <div class="row">
+      <label>Gap</label>
+      <input type="range" id="goalGap" min="30" max="200" value="80" />
+      <span class="val" id="goalGapVal">80</span>
+    </div>
+    <div class="row">
+      <label>Spoke</label>
+      <input type="range" id="goalSpoke" min="15" max="120" value="50" />
+      <span class="val" id="goalSpokeVal">50</span>
+    </div>
+  </div>
+
+  <div class="section" id="ellipseSection" style="display:none;">
+    <h3>Ellipse</h3>
+    <div class="row">
+      <label>Radius</label>
+      <input type="range" id="ellipseRx" min="20" max="200" value="60" />
+      <span class="val" id="ellipseRxVal">60</span>
+    </div>
+    <div class="row">
+      <label>Eccentricity</label>
+      <input type="range" id="ellipseEcc" min="0" max="90" value="0" />
+      <span class="val" id="ellipseEccVal">0%</span>
+    </div>
+    <div class="row">
+      <label>Rotation</label>
+      <input type="range" id="ellipseAngle" min="0" max="179" value="0" />
+      <span class="val" id="ellipseAngleVal">0°</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Options</h3>
+    <div class="row">
+      <label>Snap to grid (20px)</label>
+      <input type="checkbox" id="snapGrid" checked />
+    </div>
+  </div>
+
+  <div class="section">
+    <button class="btn" id="btnSave">Save to src/levels/</button>
+    <button class="btn" id="btnLoad" style="border-color:#446688;color:#778899;margin-top:4px;">Load from src/levels/</button>
+    <div id="saveStatus" style="font-size:11px;color:#446688;min-height:16px;margin-top:2px;"></div>
+    <button class="btn btn-warn" id="btnClear" style="margin-top:4px;">Clear All</button>
+  </div>
+
+  <div class="section hint">
+    <strong style="color:#556677">Ellipse:</strong> Click to place. Click an ellipse to select/drag it. Delete removes it.<br><br>
+    <strong style="color:#556677">Boundary:</strong> Click edge to split it. Click empty space to append. RMB on a vertex to delete it.<br><br>
+    <strong style="color:#556677">Blocker:</strong> Click to build polygon, RMB to close. Click a vertex to select that blocker. Click its edge to split. RMB a vertex to delete it.<br><br>
+    <strong style="color:#556677">Start:</strong> Drag the 3 kickoff coin positions.<br><br>
+    Goal handle (gold circle) is draggable on the seam edge.<br><br>
+    <strong style="color:#556677">Save</strong> writes directly to src/levels/ and the game picks it up instantly.
+  </div>
+</div>
+
+<div id="canvas-wrap">
+  <canvas id="canvas" width="800" height="800"></canvas>
+</div>
+
+<script type="module" src="/src/editor/main.ts"></script>
+</body>
+</html>

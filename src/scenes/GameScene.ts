@@ -6,7 +6,7 @@ import {
 } from '../config';
 import { GameState, Vec2, GoalPost, PlayerId } from '../types';
 import { GameConfig, DEFAULT_CONFIG } from '../FieldConfig';
-import { LevelDef } from '../LevelDef';
+import { LevelDef, EllipseDef } from '../LevelDef';
 import { stadiumLevel } from '../levels/stadium';
 import { GameAudio } from '../Audio';
 
@@ -50,10 +50,16 @@ export class GameScene extends Phaser.Scene {
   private audio = new GameAudio();
 
   // Static UI (above container)
-  private scoreText!: Phaser.GameObjects.Text;
-  private playerText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
   private settingsLabels: Phaser.GameObjects.Text[] = [];
+
+  // DOM panel elements
+  private domP1Score!: HTMLElement;
+  private domP2Score!: HTMLElement;
+  private domP1Status!: HTMLElement;
+  private domP2Status!: HTMLElement;
+  private domP1Pips!: HTMLElement;
+  private domP2Pips!: HTMLElement;
 
   // Drag input
   private dragging = false;
@@ -123,22 +129,14 @@ export class GameScene extends Phaser.Scene {
   // ─── UI ──────────────────────────────────────────────────────────────────────
 
   private createUI() {
-    // Score bar
-    this.add.rectangle(CX, 30, CANVAS_WIDTH, 60, 0x000000, 0.85).setDepth(50);
-    this.add.rectangle(CX, 30, CANVAS_WIDTH, 60)
-      .setStrokeStyle(1, C_CYAN, 0.4).setFillStyle(0, 0).setDepth(50);
+    this.domP1Score  = document.getElementById('p1-score')!;
+    this.domP2Score  = document.getElementById('p2-score')!;
+    this.domP1Status = document.getElementById('p1-status')!;
+    this.domP2Status = document.getElementById('p2-status')!;
+    this.domP1Pips   = document.getElementById('p1-pips')!;
+    this.domP2Pips   = document.getElementById('p2-pips')!;
 
-    this.scoreText = this.add.text(CX, 6, '', {
-      fontSize: '22px', fontFamily: 'monospace', color: '#00ffee',
-      stroke: '#003333', strokeThickness: 3, align: 'center',
-    }).setOrigin(0.5, 0).setDepth(51);
-
-    this.playerText = this.add.text(CX, 36, '', {
-      fontSize: '14px', fontFamily: 'monospace', color: '#ff00cc',
-      stroke: '#330033', strokeThickness: 2, align: 'center',
-    }).setOrigin(0.5, 0).setDepth(51);
-
-    this.statusText = this.add.text(CX, CY + 20, '', {
+    this.statusText = this.add.text(CX, CY, '', {
       fontSize: '64px', fontFamily: 'monospace', fontStyle: 'bold',
       color: '#ffffff', stroke: '#000022', strokeThickness: 10, align: 'center',
     }).setOrigin(0.5, 0.5).setAlpha(0).setDepth(55);
@@ -146,18 +144,42 @@ export class GameScene extends Phaser.Scene {
 
   private updateUI() {
     const { scores, attacker, phase } = this.state;
-    this.scoreText.setText(`P1: ${scores[0]}   |   P2: ${scores[1]}`);
+
+    this.domP1Score.textContent = `${scores[0]}`;
+    this.domP2Score.textContent = `${scores[1]}`;
+
+    // Goal pip indicators
+    const renderPips = (el: HTMLElement, score: number, color: string) => {
+      el.innerHTML = '';
+      for (let i = 0; i < WIN_GOALS; i++) {
+        const pip = document.createElement('div');
+        pip.className = 'pip' + (i < score ? ' filled' : '');
+        pip.style.color = color;
+        el.appendChild(pip);
+      }
+    };
+    renderPips(this.domP1Pips, scores[0], '#00ffee');
+    renderPips(this.domP2Pips, scores[1], '#ff00cc');
+
+    // Active player highlight
+    const panelLeft  = document.getElementById('panel-left')!;
+    const panelRight = document.getElementById('panel-right')!;
+    const p1Active = phase !== 'gameover' && attacker === 0;
+    const p2Active = phase !== 'gameover' && attacker === 1;
+    panelLeft.classList.toggle('is-active',  p1Active);
+    panelRight.classList.toggle('is-active', p2Active);
 
     if (phase === 'gameover') {
-      const winner = scores[0] >= WIN_GOALS ? 1 : 2;
-      this.playerText.setText(`Player ${winner} wins!`);
+      const winner = scores[0] >= WIN_GOALS ? 0 : 1;
+      this.domP1Status.textContent = winner === 0 ? 'Winner!' : '';
+      this.domP2Status.textContent = winner === 1 ? 'Winner!' : '';
     } else {
-      const name = `Player ${attacker + 1}`;
-      this.playerText.setText(
-        phase === 'kickoff'   ? `${name} — Kick off!` :
-        phase === 'playing'   ? `${name} — Choose a coin` :
-        name,
+      const activeStatus = (
+        phase === 'kickoff' ? 'Kick off!' :
+        phase === 'playing' ? 'Choose a coin' : ''
       );
+      this.domP1Status.textContent = attacker === 0 ? activeStatus : '';
+      this.domP2Status.textContent = attacker === 1 ? activeStatus : '';
     }
   }
 
@@ -273,13 +295,54 @@ export class GameScene extends Phaser.Scene {
       this.addWall(goal.rightBase, goal.rightTip);
     }
 
-    // Blockers — each is a closed polygon of walls
-    for (const blocker of blockers) {
+    // Blockers — shift walls inward (toward centroid) so the outer face sits on
+    // the drawn edge and coins approaching from the field hit the correct surface.
+    // For field levels, also add the 180° mirrored copy of each blocker.
+    const allBlockers = this.level.type === 'field'
+      ? [...blockers, ...blockers.map(b => b.map(v => ({ x: 2 * CX - v.x, y: 2 * CY - v.y })))]
+      : blockers;
+
+    for (const blocker of allBlockers) {
       const m = blocker.length;
+      const centX = blocker.reduce((s, v) => s + v.x, 0) / m;
+      const centY = blocker.reduce((s, v) => s + v.y, 0) / m;
       for (let i = 0; i < m; i++) {
-        this.addWall(blocker[i], blocker[(i + 1) % m]);
+        const a = blocker[i], b = blocker[(i + 1) % m];
+        if (Math.hypot(b.x - a.x, b.y - a.y) < 1) continue; // skip duplicate/zero-length edges
+        this.addWall(a, b, centX, centY, true);
       }
     }
+
+    // Ellipse blockers — approximated as convex polygon colliders
+    const srcEllipses = this.level.ellipses ?? [];
+    const allEllipses: EllipseDef[] = this.level.type === 'field'
+      ? [...srcEllipses, ...srcEllipses.map(e => ({ ...e, x: 2 * CX - e.x, y: 2 * CY - e.y }))]
+      : srcEllipses;
+
+    for (const ell of allEllipses) {
+      this.addEllipseWall(ell);
+    }
+  }
+
+  private addEllipseWall(e: EllipseDef) {
+    const N = 24;
+    const pts = new Float32Array(N * 2);
+    const cos = Math.cos(e.angle), sin = Math.sin(e.angle);
+    for (let i = 0; i < N; i++) {
+      const a = (2 * Math.PI * i) / N;
+      const lx = e.rx * Math.cos(a), ly = e.ry * Math.sin(a);
+      pts[i * 2]     = e.x + lx * cos - ly * sin;
+      pts[i * 2 + 1] = e.y + lx * sin + ly * cos;
+    }
+    const body = this.rapierWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    const hull = RAPIER.ColliderDesc.convexHull(pts);
+    if (!hull) return;
+    const col = this.rapierWorld.createCollider(
+      hull.setRestitution(1.0).setFriction(0.0)
+        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
+      body,
+    );
+    this.colliderLabels.set(col.handle, 'wall');
   }
 
   /**
@@ -289,19 +352,22 @@ export class GameScene extends Phaser.Scene {
    * Length is extended by the wall thickness at each end to overlap corners
    * and close the seam gap between adjacent segments.
    */
-  private addWall(a: Vec2, b: Vec2) {
+  private addWall(a: Vec2, b: Vec2, refX = CX, refY = CY, inward = false) {
     // CCD on coins handles tunneling — walls can be thinner than Matter.js needed
     const t = 20;
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.hypot(dx, dy);
     const angle = Math.atan2(dy, dx);
 
-    // Outward normal (away from field centre)
+    // Shift wall outward from the reference point (field centre for boundary,
+    // blocker centroid for blockers) so its inner face aligns with the drawn edge
     const nx = dy / len, ny = -dx / len;
     const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
-    const dot = nx * (CX - midX) + ny * (CY - midY);
-    const outX = dot > 0 ? -nx : nx;
-    const outY = dot > 0 ? -ny : ny;
+    const dot = nx * (refX - midX) + ny * (refY - midY);
+    // inward=false (boundary): shift away from ref so inner face is on edge
+    // inward=true (blocker):   shift toward ref so outer face is on edge
+    const outX = inward ? (dot > 0 ? nx : -nx) : (dot > 0 ? -nx : nx);
+    const outY = inward ? (dot > 0 ? ny : -ny) : (dot > 0 ? -ny : ny);
 
     // Shift outward so inner face aligns with drawn edge
     const cx = midX + outX * (t / 2);
@@ -398,8 +464,8 @@ export class GameScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       window.removeEventListener('mousemove', onWindowMove);
       window.removeEventListener('mouseup', onWindowUp);
-      this.eventQueue.free();
-      this.rapierWorld.free();
+      try { this.eventQueue.free(); } catch (_) { /* ignore WASM cleanup errors */ }
+      try { this.rapierWorld.free(); } catch (_) { /* ignore WASM cleanup errors */ }
     });
   }
 
@@ -768,9 +834,14 @@ export class GameScene extends Phaser.Scene {
       this.drawGoal(g, this.goals[gi], gi === 0 ? C_CYAN : C_MAGENTA);
     }
 
-    // ── Blockers ──
-    for (const blocker of this.level.blockers) {
+    // ── Blockers (polygon) ──
+    const allPolyBlockers = this.level.type === 'field'
+      ? [...this.level.blockers, ...this.level.blockers.map(b => b.map(v => ({ x: 2 * CX - v.x, y: 2 * CY - v.y })))]
+      : this.level.blockers;
+
+    for (const blocker of allPolyBlockers) {
       const bverts = blocker.map(v => this.worldToLocal(v.x, v.y));
+      if (bverts.length < 2) continue;
       g.fillStyle(C_DARK, 1);
       g.beginPath();
       g.moveTo(bverts[0].x, bverts[0].y);
@@ -787,6 +858,40 @@ export class GameScene extends Phaser.Scene {
       for (let i = 1; i < bverts.length; i++) g.lineTo(bverts[i].x, bverts[i].y);
       g.closePath(); g.strokePath();
     }
+
+    // ── Blockers (ellipse) ──
+    const srcEllipses = this.level.ellipses ?? [];
+    const allEllipses: EllipseDef[] = this.level.type === 'field'
+      ? [...srcEllipses, ...srcEllipses.map(e => ({ ...e, x: 2 * CX - e.x, y: 2 * CY - e.y }))]
+      : srcEllipses;
+
+    for (const ell of allEllipses) {
+      this.drawEllipseBlocker(g, ell);
+    }
+  }
+
+  private drawEllipseBlocker(g: Phaser.GameObjects.Graphics, e: EllipseDef) {
+    const N = 32;
+    const local = this.worldToLocal(e.x, e.y);
+    const cos = Math.cos(e.angle), sin = Math.sin(e.angle);
+    const pts: Vec2[] = [];
+    for (let i = 0; i < N; i++) {
+      const a = (2 * Math.PI * i) / N;
+      const lx = e.rx * Math.cos(a), ly = e.ry * Math.sin(a);
+      pts.push({ x: local.x + lx * cos - ly * sin, y: local.y + lx * sin + ly * cos });
+    }
+    g.fillStyle(C_DARK, 1);
+    g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < N; i++) g.lineTo(pts[i].x, pts[i].y);
+    g.closePath(); g.fillPath();
+    g.lineStyle(6, 0x334455, 0.4);
+    g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < N; i++) g.lineTo(pts[i].x, pts[i].y);
+    g.closePath(); g.strokePath();
+    g.lineStyle(2, 0x446688, 0.9);
+    g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < N; i++) g.lineTo(pts[i].x, pts[i].y);
+    g.closePath(); g.strokePath();
   }
 
   /** Flood-fill a half of the polygon with a faint tint */

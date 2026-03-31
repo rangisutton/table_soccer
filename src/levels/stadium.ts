@@ -69,3 +69,5 @@ export const stadiumLevel: LevelDef = {
   goals: [buildGoal(0, 0), buildGoal(SIDES / 2, 1)],
   start: startP1,
 };
+
+export default stadiumLevel;

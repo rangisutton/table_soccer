@@ -2,6 +2,14 @@ import { Vec2, GoalPost } from './types';
 
 export type LevelType = 'field' | 'course';
 
+export interface EllipseDef {
+  x: number;
+  y: number;
+  rx: number;    // semi-major axis
+  ry: number;    // semi-minor axis
+  angle: number; // rotation in radians
+}
+
 export interface LevelDef {
   id: string;
   label: string;
@@ -10,6 +18,8 @@ export interface LevelDef {
   boundary: Vec2[];
   /** Interior solid obstacles — each is a closed polygon */
   blockers: Vec2[][];
+  /** Interior solid obstacles — ellipses */
+  ellipses?: EllipseDef[];
   /** Goal openings — for 'field' levels there are two; for 'course' levels, one */
   goals: GoalPost[];
   /** Initial coin positions [kicked, otherA, otherB] */
