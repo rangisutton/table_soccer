@@ -96,7 +96,9 @@ export class GameScene extends Phaser.Scene {
       const key = `field_img_${level.id}`;
       this.textures.remove(key); // force reload in case image was updated
       this.load.on('loaderror', () => { /* modified image not yet placed — fall back to procedural */ });
-      this.load.image(key, level.imageUrl);
+      const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+      const url = level.imageUrl.startsWith('/') ? base + level.imageUrl : level.imageUrl;
+      this.load.image(key, url);
     }
   }
 

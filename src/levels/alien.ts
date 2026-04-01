@@ -1,8 +1,8 @@
 import { LevelDef } from '../LevelDef';
 
-export const hourGlassLevel: LevelDef = {
-  id: 'hour-glass',
-  label: 'Hour Glass',
+export const alienLevel: LevelDef = {
+  id: 'alien',
+  label: 'Alien',
   type: 'field',
   look: 'neon',
   coinConfig: { radius: 10, kickPower: 1.0, drag: 5.0 },
@@ -55,4 +55,4 @@ export const hourGlassLevel: LevelDef = {
   ],
 };
 
-export default hourGlassLevel;
+export default alienLevel;
