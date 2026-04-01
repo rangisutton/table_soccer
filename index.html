@@ -77,6 +77,13 @@
     .side-panel.is-active .player-status { color: #99bbcc; }
     #panel-left.is-active  { border-color: #00ffee44; }
     #panel-right.is-active { border-color: #ff00cc44; }
+
+    #settings-panel { display: none; margin-top: 12px; width: 100%; }
+    .setting-row { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-bottom: 6px; }
+    .setting-label { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: #334455; flex: 1; text-align: left; }
+    .setting-val { font-size: 11px; color: #aaccdd; width: 28px; text-align: center; }
+    .setting-btn { background: #001118; border: 1px solid #224455; color: #00ffee; font-family: monospace; font-size: 13px; cursor: pointer; width: 22px; line-height: 1; padding: 1px 0; }
+    .setting-btn:hover { color: #ffffff; }
   </style>
 </head>
 <body>
@@ -85,6 +92,7 @@
     <div class="player-score" id="p1-score">0</div>
     <div class="goal-pips" id="p1-pips"></div>
     <div class="player-status" id="p1-status"></div>
+    <div id="settings-panel"></div>
   </div>
 
   <div id="panel-right" class="side-panel">

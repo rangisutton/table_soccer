@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import RAPIER from '@dimforge/rapier2d-compat';
 import {
-  CANVAS_WIDTH, CANVAS_HEIGHT, FIELD_RADIUS,
+  CANVAS_WIDTH, CANVAS_HEIGHT,
   COIN_RADIUS, WIN_GOALS,
 } from '../config';
 import { GameState, Vec2, GoalPost, PlayerId } from '../types';
@@ -61,7 +61,6 @@ export class GameScene extends Phaser.Scene {
 
   // Static UI (above container)
   private statusText!: Phaser.GameObjects.Text;
-  private settingsLabels: Phaser.GameObjects.Text[] = [];
 
   // DOM panel elements
   private domP1Score!: HTMLElement;
@@ -79,8 +78,6 @@ export class GameScene extends Phaser.Scene {
 
   // Simulation tracking
   private prevCoinPos: Vec2[] = [];
-  private splitLineA: Vec2 = { x: 0, y: 0 };
-  private splitLineB: Vec2 = { x: 0, y: 0 };
   private splitDetected = false;
   private kickoffMove = true;
   private kickoffHitDetected = false; // kicked coin touched another coin during kickoff
@@ -162,13 +159,9 @@ export class GameScene extends Phaser.Scene {
     this.placeKickoff();
     this.setupInput();
 
-    // Menu button
-    const menuBtn = this.add.text(CANVAS_WIDTH - 10, CANVAS_HEIGHT - 10, '[ Menu ]', {
-      fontSize: '13px', fontFamily: 'monospace', color: '#446688',
-    }).setOrigin(1, 1).setDepth(55).setInteractive({ useHandCursor: true });
-    menuBtn.on('pointerover', () => menuBtn.setColor('#00ffee'));
-    menuBtn.on('pointerout',  () => menuBtn.setColor('#446688'));
-    menuBtn.on('pointerup',   () => this.scene.start('MenuScene'));
+    // Esc → menu, F1 → reset same level
+    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('MenuScene'));
+    this.input.keyboard?.on('keydown-F1',  (e: KeyboardEvent) => { e.preventDefault(); this.scene.restart(); });
 
     this.createSettingsPanel();
     this.draw();
@@ -241,12 +234,9 @@ export class GameScene extends Phaser.Scene {
   // ─── Settings panel ───────────────────────────────────────────────────────────
 
   private createSettingsPanel() {
-    const px = 8, py = CANVAS_HEIGHT - 110;
-    const rowH = 22;
-
-    const panelW = 188, panelH = 100;
-    this.add.rectangle(px + panelW / 2, py + panelH / 2 - 4, panelW, panelH, 0x000000, 0.6)
-      .setDepth(54).setStrokeStyle(1, 0x224455, 1);
+    const panel = document.getElementById('settings-panel')!;
+    panel.style.display = 'block';
+    panel.innerHTML = '';
 
     const controls: { label: string; get: () => number; set: (v: number) => void; step: number; min: number; max: number; fmt: (v: number) => string }[] = [
       {
@@ -266,47 +256,46 @@ export class GameScene extends Phaser.Scene {
       {
         label: 'Drag',
         get: () => this.cfg.coinDrag,
-        set: (v) => {
-          this.cfg.coinDrag = v;
-          // Apply immediately to all existing coin bodies
-          for (const c of this.coins) c.setLinearDamping(v);
-        },
+        set: (v) => { this.cfg.coinDrag = v; for (const c of this.coins) c.setLinearDamping(v); },
         step: 0.5, min: 0.0, max: 30.0,
         fmt: (v) => v.toFixed(1),
       },
     ];
 
-    controls.forEach((ctrl, i) => {
-      const y = py + i * rowH + 12;
+    for (const ctrl of controls) {
+      const row = document.createElement('div');
+      row.className = 'setting-row';
 
-      this.add.text(px + 4, y, ctrl.label, {
-        fontSize: '11px', fontFamily: 'monospace', color: '#556677',
-      }).setOrigin(0, 0.5).setDepth(55);
+      const lbl = document.createElement('span');
+      lbl.className = 'setting-label';
+      lbl.textContent = ctrl.label;
 
-      const valLabel = this.add.text(px + 86, y, ctrl.fmt(ctrl.get()), {
-        fontSize: '11px', fontFamily: 'monospace', color: '#aaccdd',
-      }).setOrigin(0.5, 0.5).setDepth(55);
-      this.settingsLabels.push(valLabel);
+      const val = document.createElement('span');
+      val.className = 'setting-val';
+      val.textContent = ctrl.fmt(ctrl.get());
 
-      const mkBtn = (bx: number, delta: number, lbl: string) => {
-        const btn = this.add.text(bx, y, lbl, {
-          fontSize: '13px', fontFamily: 'monospace', color: '#00ffee',
-          backgroundColor: '#001118', padding: { x: 3, y: 1 },
-        }).setOrigin(0.5, 0.5).setDepth(55).setInteractive({ useHandCursor: true });
-        btn.on('pointerup', () => {
-          const next = Phaser.Math.Clamp(
-            Math.round((ctrl.get() + delta) * 1000) / 1000,
-            ctrl.min, ctrl.max,
-          );
-          ctrl.set(next);
-          valLabel.setText(ctrl.fmt(ctrl.get()));
+      const mkBtn = (delta: number, text: string) => {
+        const btn = document.createElement('button');
+        btn.className = 'setting-btn';
+        btn.textContent = text;
+        btn.addEventListener('click', () => {
+          const next = Math.round((ctrl.get() + delta) * 1000) / 1000;
+          ctrl.set(Math.max(ctrl.min, Math.min(ctrl.max, next)));
+          val.textContent = ctrl.fmt(ctrl.get());
         });
-        btn.on('pointerover', () => btn.setColor('#ffffff'));
-        btn.on('pointerout',  () => btn.setColor('#00ffee'));
+        return btn;
       };
 
-      mkBtn(px + 120, -ctrl.step, '−');
-      mkBtn(px + 148, +ctrl.step, '+');
+      row.appendChild(lbl);
+      row.appendChild(mkBtn(-ctrl.step, '−'));
+      row.appendChild(val);
+      row.appendChild(mkBtn(+ctrl.step, '+'));
+      panel.appendChild(row);
+    }
+
+    this.events.once('shutdown', () => {
+      panel.style.display = 'none';
+      panel.innerHTML = '';
     });
   }
 
@@ -553,12 +542,6 @@ export class GameScene extends Phaser.Scene {
     // Rapier velocity is px/s — multiply by 60 to match previous px/frame behaviour
     const spd = power * 7.2 * this.cfg.kickPower;
     this.coins[idx].setLinvel({ x: (dx / dist) * spd, y: (dy / dist) * spd }, true);
-
-    const others = [0, 1, 2].filter(i => i !== idx);
-    const pA = this.coins[others[0]].translation();
-    const pB = this.coins[others[1]].translation();
-    this.splitLineA = { x: pA.x, y: pA.y };
-    this.splitLineB = { x: pB.x, y: pB.y };
 
     this.state.lastKickedCoinIndex = idx;
     this.state.phase = 'simulating';

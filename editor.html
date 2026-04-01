@@ -86,7 +86,7 @@
     </div>
     <div class="row">
       <label>Spoke</label>
-      <input type="range" id="goalSpoke" min="15" max="120" value="50" />
+      <input type="range" id="goalSpoke" min="1" max="120" value="50" />
       <span class="val" id="goalSpokeVal">50</span>
     </div>
   </div>
@@ -95,7 +95,7 @@
     <h3>Ellipse</h3>
     <div class="row">
       <label>Radius</label>
-      <input type="range" id="ellipseRx" min="20" max="200" value="60" />
+      <input type="range" id="ellipseRx" min="5" max="200" value="60" />
       <span class="val" id="ellipseRxVal">60</span>
     </div>
     <div class="row">
@@ -107,6 +107,33 @@
       <label>Rotation</label>
       <input type="range" id="ellipseAngle" min="0" max="179" value="0" />
       <span class="val" id="ellipseAngleVal">0°</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Look</h3>
+    <select id="levelLook" style="width:100%;background:#0a1a2a;border:1px solid #224466;color:#ffffff;font-family:monospace;font-size:12px;padding:4px 6px;">
+      <option value="neon">Neon</option>
+      <option value="ambient">Ambient</option>
+    </select>
+  </div>
+
+  <div class="section">
+    <h3>Coin Config</h3>
+    <div class="row">
+      <label>Radius</label>
+      <input type="range" id="coinRadius" min="5" max="36" value="10" />
+      <span class="val" id="coinRadiusVal">10</span>
+    </div>
+    <div class="row">
+      <label>Kick power</label>
+      <input type="range" id="coinKickPower" min="1" max="30" value="10" step="1" />
+      <span class="val" id="coinKickPowerVal">1.0x</span>
+    </div>
+    <div class="row">
+      <label>Drag</label>
+      <input type="range" id="coinDrag" min="0" max="300" value="50" step="1" />
+      <span class="val" id="coinDragVal">5.0</span>
     </div>
   </div>
 

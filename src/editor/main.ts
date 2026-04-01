@@ -66,6 +66,10 @@ const state = {
   snapGrid: true,
   levelName: 'My Field',
   imageUrl: null as string | null,
+  look: 'neon' as string,
+  coinRadius: 10,
+  coinKickPower: 1.0,
+  coinDrag: 5.0,
 };
 
 // ─── Computed geometry ────────────────────────────────────────────────────────
@@ -265,6 +269,14 @@ function drawHalfFill(boundary: Vec2[], topHalf: boolean, color: string) {
 
 function drawBoundaryBorder(boundary: Vec2[]) {
   const n = boundary.length;
+  if (exportMode) {
+    // Closed polygon, single colour
+    ctx.strokeStyle = '#00ffee'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(boundary[0].x, boundary[0].y);
+    for (let i = 1; i < n; i++) ctx.lineTo(boundary[i].x, boundary[i].y);
+    ctx.closePath(); ctx.stroke();
+    return;
+  }
   const seams = orderedSeams();
   for (let i = 0; i < n; i++) {
     const a = boundary[i], b = boundary[(i + 1) % n];
@@ -345,20 +357,28 @@ function drawEllipses() {
   for (let ei = 0; ei < state.ellipses.length; ei++) {
     const e = state.ellipses[ei];
     const isSel = state.selectedEllipseIdx === ei;
-    // Draw mirror (dashed, behind)
+    // Draw mirror
     const mx = 2 * CX - e.x, my = 2 * CY - e.y;
     ctx.save();
     ctx.translate(mx, my);
     ctx.rotate(e.angle);
     ctx.beginPath();
     ctx.ellipse(0, 0, e.rx, e.ry, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,0,204,0.06)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,0,204,0.35)';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 3]);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    if (exportMode) {
+      ctx.fillStyle = '#888888';
+      ctx.fill();
+      ctx.strokeStyle = '#446688';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = 'rgba(255,0,204,0.06)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,0,204,0.35)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     ctx.restore();
     // Draw original
     const selActive = isSel && !exportMode;
@@ -367,7 +387,7 @@ function drawEllipses() {
     ctx.rotate(e.angle);
     ctx.beginPath();
     ctx.ellipse(0, 0, e.rx, e.ry, 0, 0, Math.PI * 2);
-    ctx.fillStyle = selActive ? 'rgba(0,200,255,0.08)' : 'rgba(3,3,32,0.85)';
+    ctx.fillStyle = exportMode ? '#888888' : selActive ? 'rgba(0,200,255,0.08)' : 'rgba(3,3,32,0.85)';
     ctx.fill();
     ctx.strokeStyle = selActive ? '#00ccff' : '#446688';
     ctx.lineWidth = selActive ? 2 : 1.5;
@@ -390,20 +410,29 @@ function drawBlockers() {
   for (const { verts, isMirror } of allBlockers()) {
     if (!isMirror) continue;
     if (verts.length === 0) continue;
-    ctx.fillStyle = 'rgba(255,0,204,0.06)';
-    ctx.strokeStyle = 'rgba(255,0,204,0.35)';
-    ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
-    ctx.beginPath(); ctx.moveTo(verts[0].x, verts[0].y);
-    for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.setLineDash([]);
+    if (exportMode) {
+      ctx.fillStyle = '#888888';
+      ctx.strokeStyle = '#446688';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(verts[0].x, verts[0].y);
+      for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    } else {
+      ctx.fillStyle = 'rgba(255,0,204,0.06)';
+      ctx.strokeStyle = 'rgba(255,0,204,0.35)';
+      ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(verts[0].x, verts[0].y);
+      for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.setLineDash([]);
+    }
   }
   // Draw user blockers
   for (let bi = 0; bi < state.blockers.length; bi++) {
     const b = state.blockers[bi];
     const isSelected = state.selectedBlockerIdx === bi;
     if (b.length === 0) continue;
-    ctx.fillStyle = isSelected ? 'rgba(0,200,255,0.08)' : 'rgba(3,3,32,0.85)';
+    ctx.fillStyle = exportMode ? '#888888' : isSelected ? 'rgba(0,200,255,0.08)' : 'rgba(3,3,32,0.85)';
     ctx.strokeStyle = isSelected ? '#00ccff' : '#446688';
     ctx.lineWidth = isSelected ? 2 : 1.5;
     ctx.beginPath(); ctx.moveTo(b[0].x, b[0].y);
@@ -667,6 +696,15 @@ function updateEllipseDeleteBtn() {
   btn.style.opacity = state.selectedEllipseIdx === null ? '0.3' : '1';
 }
 
+function updateCoinConfigUI() {
+  (document.getElementById('coinRadius') as HTMLInputElement).value = String(state.coinRadius);
+  (document.getElementById('coinKickPower') as HTMLInputElement).value = String(Math.round(state.coinKickPower * 10));
+  (document.getElementById('coinDrag') as HTMLInputElement).value = String(Math.round(state.coinDrag * 10));
+  document.getElementById('coinRadiusVal')!.textContent = String(state.coinRadius);
+  document.getElementById('coinKickPowerVal')!.textContent = state.coinKickPower.toFixed(1) + 'x';
+  document.getElementById('coinDragVal')!.textContent = state.coinDrag.toFixed(1);
+}
+
 function syncEllipseUI(idx: number) {
   const e = state.ellipses[idx];
   if (!e) return;
@@ -796,6 +834,27 @@ document.getElementById('btnSave')!.addEventListener('click', async () => {
   }
 });
 
+(document.getElementById('levelLook') as HTMLSelectElement).addEventListener('change', (ev) => {
+  state.look = (ev.target as HTMLSelectElement).value;
+  save();
+});
+
+(document.getElementById('coinRadius') as HTMLInputElement).addEventListener('input', (ev) => {
+  state.coinRadius = Number((ev.target as HTMLInputElement).value);
+  document.getElementById('coinRadiusVal')!.textContent = String(state.coinRadius);
+  save();
+});
+(document.getElementById('coinKickPower') as HTMLInputElement).addEventListener('input', (ev) => {
+  state.coinKickPower = Number((ev.target as HTMLInputElement).value) / 10;
+  document.getElementById('coinKickPowerVal')!.textContent = state.coinKickPower.toFixed(1) + 'x';
+  save();
+});
+(document.getElementById('coinDrag') as HTMLInputElement).addEventListener('input', (ev) => {
+  state.coinDrag = Number((ev.target as HTMLInputElement).value) / 10;
+  document.getElementById('coinDragVal')!.textContent = state.coinDrag.toFixed(1);
+  save();
+});
+
 function setStatus(msg: string, type: 'ok' | 'error' | 'info') {
   const el = document.getElementById('saveStatus')!;
   el.textContent = msg;
@@ -842,6 +901,8 @@ export const ${ident}: LevelDef = {
   id: '${id}',
   label: '${name}',
   type: 'field',${state.imageUrl ? `\n  imageUrl: '${state.imageUrl}',` : ''}
+  look: '${state.look}',
+  coinConfig: { radius: ${state.coinRadius}, kickPower: ${state.coinKickPower.toFixed(1)}, drag: ${state.coinDrag.toFixed(1)} },
   boundary: [
 ${bLines}
   ],
@@ -919,6 +980,10 @@ function editorStateForSave() {
     start: state.start,
     levelName: state.levelName,
     imageUrl: state.imageUrl,
+    look: state.look,
+    coinRadius: state.coinRadius,
+    coinKickPower: state.coinKickPower,
+    coinDrag: state.coinDrag,
   };
 }
 
@@ -929,14 +994,20 @@ function applyState(s: ReturnType<typeof editorStateForSave>) {
   state.start      = s.start      ?? null;
   state.levelName  = s.levelName  ?? 'My Field';
   state.selectedBlockerIdx = null;
-  state.ellipses   = (s as any).ellipses   ?? [];
-  state.imageUrl   = (s as any).imageUrl   ?? null;
+  state.ellipses     = (s as any).ellipses     ?? [];
+  state.imageUrl     = (s as any).imageUrl     ?? null;
+  state.look         = (s as any).look         ?? 'neon';
+  state.coinRadius   = (s as any).coinRadius   ?? 10;
+  state.coinKickPower = (s as any).coinKickPower ?? 1.0;
+  state.coinDrag     = (s as any).coinDrag     ?? 5.0;
   state.selectedEllipseIdx = null;
   state.activeBlocker = null;
   (document.getElementById('levelName') as HTMLInputElement).value = state.levelName;
+  (document.getElementById('levelLook') as HTMLSelectElement).value = state.look;
   updateGoalUI();
   updateDeleteBlockerBtn();
   updateEllipseDeleteBtn();
+  updateCoinConfigUI();
 }
 
 function save() {
@@ -971,9 +1042,11 @@ document.getElementById('btnLoad')!.addEventListener('click', async () => {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 loadSaved();
+(document.getElementById('levelLook') as HTMLSelectElement).value = state.look;
 updateGoalUI();
 updateDeleteBlockerBtn();
 updateEllipseDeleteBtn();
+updateCoinConfigUI();
 
 function loop() { draw(); requestAnimationFrame(loop); }
 loop();
