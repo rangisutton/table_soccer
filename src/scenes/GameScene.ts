@@ -694,6 +694,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onFoul() {
+    const wasKickoff = this.kickoffMove;
     this.state.phase = 'foul';
     this.showStatus('Fault', '#ff4422');
     this.state.attacker = (1 - this.state.attacker) as PlayerId;
@@ -704,7 +705,14 @@ export class GameScene extends Phaser.Scene {
     this.kickoffMove = false;
     this.state.lastKickedCoinIndex = null;
     this.updateUI();
-    this.time.delayedCall(1200, () => this.rotateView(this.state.attacker, 'playing'));
+    if (wasKickoff) {
+      this.time.delayedCall(1200, () => {
+        this.placeKickoff();
+        this.rotateView(this.state.attacker, 'kickoff');
+      });
+    } else {
+      this.time.delayedCall(1200, () => this.rotateView(this.state.attacker, 'playing'));
+    }
   }
 
   private rotateView(attacker: PlayerId, nextPhase: 'kickoff' | 'playing') {
