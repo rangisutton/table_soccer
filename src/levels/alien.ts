@@ -4,6 +4,7 @@ export const alienLevel: LevelDef = {
   id: 'alien',
   label: 'Alien',
   type: 'field',
+  imageUrl: '/field-images/alien.png',
   look: 'neon',
   coinConfig: { radius: 10, kickPower: 1.0, drag: 5.0 },
   boundary: [

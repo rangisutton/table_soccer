@@ -4,6 +4,7 @@ export const zedLevel: LevelDef = {
   id: 'zed',
   label: 'Zed',
   type: 'field',
+  imageUrl: '/field-images/zed.png',
   look: 'neon',
   coinConfig: { radius: 7, kickPower: 1.0, drag: 4.2 },
   boundary: [

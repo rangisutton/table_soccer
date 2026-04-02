@@ -4,6 +4,7 @@ export const soccerLevel: LevelDef = {
   id: 'soccer',
   label: 'Soccer',
   type: 'field',
+  imageUrl: '/field-images/soccer.png',
   look: 'ambient',
   coinConfig: { radius: 7, kickPower: 1.0, drag: 11.1 },
   boundary: [
