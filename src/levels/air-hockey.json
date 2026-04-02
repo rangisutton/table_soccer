@@ -1,0 +1,55 @@
+{
+  "halfVerts": [
+    {
+      "x": 380,
+      "y": 20
+    },
+    {
+      "x": 40,
+      "y": 20
+    },
+    {
+      "x": 40,
+      "y": 780
+    },
+    {
+      "x": 380,
+      "y": 780
+    }
+  ],
+  "goal": {
+    "t": 0.5,
+    "gap": 95,
+    "spoke": 9
+  },
+  "blockers": [],
+  "ellipses": [
+    {
+      "x": 400,
+      "y": 60,
+      "rx": 23,
+      "ry": 23,
+      "angle": 0
+    }
+  ],
+  "start": [
+    {
+      "x": 400,
+      "y": 660
+    },
+    {
+      "x": 360,
+      "y": 420
+    },
+    {
+      "x": 440,
+      "y": 420
+    }
+  ],
+  "levelName": "Air Hockey",
+  "imageUrl": "/field-images/table.png",
+  "look": "neon",
+  "coinRadius": 8,
+  "coinKickPower": 2,
+  "coinDrag": 2
+}

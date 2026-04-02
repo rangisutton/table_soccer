@@ -3,7 +3,6 @@ import { CANVAS_WIDTH, CANVAS_HEIGHT } from '../config';
 import { GameConfig, DEFAULT_CONFIG } from '../FieldConfig';
 import { LevelDef } from '../LevelDef';
 import { fieldLevels, courseLevels } from '../levels/index';
-import { stadiumLevel } from '../levels/stadium';
 
 const CX = CANVAS_WIDTH / 2;
 const CY = CANVAS_HEIGHT / 2;
@@ -22,7 +21,7 @@ export class MenuScene extends Phaser.Scene {
 
   create() {
     this.cfg = { ...(this.registry.get('gameConfig') ?? DEFAULT_CONFIG) };
-    this.selectedLevel = this.registry.get('level') ?? stadiumLevel;
+    this.selectedLevel = this.registry.get('level') ?? fieldLevels[0];
 
     this.add.rectangle(CX, CY, CANVAS_WIDTH, CANVAS_HEIGHT, C_DARK);
 
