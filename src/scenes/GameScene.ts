@@ -91,6 +91,14 @@ export class GameScene extends Phaser.Scene {
   private netMode = false;
   private netPlayerIndex: 0 | 1 = 0;
   private readonly handleNetKick = (msg: Extract<ServerMsg, { type: 'kick' }>) => this.applyNetworkKick(msg);
+  private readonly handleNetPosStream = (msg: Extract<ServerMsg, { type: 'pos-stream' }>) => {
+    if (this.state.phase !== 'simulating') return;
+    msg.positions.forEach((pos, i) => {
+      if (this.coins[i]) this.coins[i].setTranslation(pos, true);
+    });
+    this.kickoffHitDetected = msg.kickoffHit;
+    this.splitDetected      = msg.split;
+  };
   private readonly handleNetPartnerDisc = () => {
     this.showStatus('Partner left', '#ff4422');
     this.time.delayedCall(1500, () => this.scene.start('MenuScene'));
@@ -209,10 +217,12 @@ export class GameScene extends Phaser.Scene {
       // P1 sees the board from the opposite end — fix their view permanently
       if (this.netPlayerIndex === 1) this.gameContainer.setRotation(Math.PI);
       net.on('kick',                 this.handleNetKick);
+      net.on('pos-stream',           this.handleNetPosStream);
       net.on('partner-disconnected', this.handleNetPartnerDisc);
       net.on('sync',                 this.handleNetSync);
       this.events.once('shutdown', () => {
         net.off('kick',                 this.handleNetKick);
+        net.off('pos-stream',           this.handleNetPosStream);
         net.off('partner-disconnected', this.handleNetPartnerDisc);
         net.off('sync',                 this.handleNetSync);
       });
@@ -624,9 +634,31 @@ export class GameScene extends Phaser.Scene {
   // ─── Game loop ────────────────────────────────────────────────────────────────
 
   update(_time: number, delta: number) {
-    this.rapierWorld.step(this.eventQueue);
-    this.processCollisionEvents();
-    if (this.state.phase === 'simulating') this.runSimulationChecks();
+    // In network mode, the passive player (opponent's turn) doesn't run physics —
+    // positions arrive via pos-stream so both screens show identical movement.
+    const passiveWatching = this.netMode
+      && this.state.phase === 'simulating'
+      && this.state.attacker !== this.netPlayerIndex;
+
+    if (!passiveWatching) {
+      this.rapierWorld.step(this.eventQueue);
+      this.processCollisionEvents();
+    }
+
+    if (this.state.phase === 'simulating') {
+      if (!passiveWatching) {
+        this.runSimulationChecks();
+        // Stream authoritative positions + glow flags to passive partner every frame
+        if (this.netMode) {
+          net.send({
+            type: 'pos-stream',
+            positions: this.coins.map(c => { const t = c.translation(); return { x: t.x, y: t.y }; }),
+            kickoffHit: this.kickoffHitDetected,
+            split:      this.splitDetected,
+          });
+        }
+      }
+    }
     // Advance sparks and glow pulses
     const dt = delta / 16.67; // normalise to 60fps
     this.sparks = this.sparks.filter(s => {

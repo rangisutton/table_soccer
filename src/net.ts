@@ -30,6 +30,7 @@ export type ServerMsg =
   | { type: 'partner-disconnected'; name: string }
   | { type: 'select-level';         levelId: string; startingPlayer: string }
   | { type: 'kick';                 coinIndex: number; vx: number; vy: number }
+  | { type: 'pos-stream';           positions: {x:number,y:number}[]; kickoffHit: boolean; split: boolean }
   | { type: 'settled';              result: 'legal' | 'foul' | 'goal'; scorer?: number }
   | { type: 'sync';                 positions: {x:number,y:number}[]; result: 'play-on'|'foul'|'goal'; scorer?: number; isOwnGoal?: boolean };
 
@@ -43,6 +44,7 @@ export type ClientMsg =
   | { type: 'unpair' }
   | { type: 'select-level';  levelId: string }
   | { type: 'kick';          coinIndex: number; vx: number; vy: number }
+  | { type: 'pos-stream';    positions: {x:number,y:number}[]; kickoffHit: boolean; split: boolean }
   | { type: 'settled';       result: 'legal' | 'foul' | 'goal'; scorer?: number }
   | { type: 'sync';          positions: {x:number,y:number}[]; result: 'play-on'|'foul'|'goal'; scorer?: number; isOwnGoal?: boolean };
 
