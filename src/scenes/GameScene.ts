@@ -9,6 +9,7 @@ import { GameConfig, DEFAULT_CONFIG } from '../FieldConfig';
 import { LevelDef, EllipseDef, LookDef, LOOKS } from '../LevelDef';
 import { alienLevel } from '../levels/alien';
 import { GameAudio } from '../Audio';
+import { net, ServerMsg } from '../net';
 
 interface Spark {
   x: number; y: number;     // world position
@@ -86,6 +87,15 @@ export class GameScene extends Phaser.Scene {
   private lastFoulCoinIndex: number | null = null; // preserves red glow after illegal kick settles
   private pendingGoal: { scorer: PlayerId, isOwnGoal: boolean } | null = null;
 
+  // Network mode
+  private netMode = false;
+  private netPlayerIndex: 0 | 1 = 0;
+  private readonly handleNetKick = (msg: Extract<ServerMsg, { type: 'kick' }>) => this.applyNetworkKick(msg);
+  private readonly handleNetPartnerDisc = () => {
+    this.showStatus('Partner left', '#ff4422');
+    this.time.delayedCall(1500, () => this.scene.start('MenuScene'));
+  };
+
   constructor() {
     super({ key: 'GameScene' });
   }
@@ -105,6 +115,8 @@ export class GameScene extends Phaser.Scene {
   create() {
     this.cfg   = { ...(this.registry.get('gameConfig') ?? DEFAULT_CONFIG) };
     this.level = this.registry.get('level') ?? alienLevel;
+    this.netMode        = this.registry.get('netMode')        ?? false;
+    this.netPlayerIndex = this.registry.get('netPlayerIndex') ?? 0;
     this.goals = this.level.goals as [GoalPost, GoalPost];
 
     // Apply level coin config over menu settings
@@ -168,6 +180,15 @@ export class GameScene extends Phaser.Scene {
     this.createSettingsPanel();
     this.draw();
     this.updateUI();
+
+    if (this.netMode) {
+      net.on('kick',                 this.handleNetKick);
+      net.on('partner-disconnected', this.handleNetPartnerDisc);
+      this.events.once('shutdown', () => {
+        net.off('kick',                 this.handleNetKick);
+        net.off('partner-disconnected', this.handleNetPartnerDisc);
+      });
+    }
   }
 
   // ─── UI ──────────────────────────────────────────────────────────────────────
@@ -475,6 +496,7 @@ export class GameScene extends Phaser.Scene {
   private setupInput() {
     this.input.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
       if (this.state.phase !== 'kickoff' && this.state.phase !== 'playing') return;
+      if (this.netMode && this.state.attacker !== this.netPlayerIndex) return;
       const world = this.screenToWorld(ptr.x, ptr.y);
       const idx = this.coinAt(world);
       if (idx === -1) return;
@@ -543,8 +565,23 @@ export class GameScene extends Phaser.Scene {
     const power = Math.min(dist, 200);
     // Rapier velocity is px/s — multiply by 60 to match previous px/frame behaviour
     const spd = power * 7.2 * this.cfg.kickPower;
-    this.coins[idx].setLinvel({ x: (dx / dist) * spd, y: (dy / dist) * spd }, true);
+    const vx = (dx / dist) * spd;
+    const vy = (dy / dist) * spd;
+    this.coins[idx].setLinvel({ x: vx, y: vy }, true);
 
+    if (this.netMode) net.send({ type: 'kick', coinIndex: idx, vx, vy });
+
+    this.applyKickState(idx);
+  }
+
+  private applyNetworkKick(msg: Extract<ServerMsg, { type: 'kick' }>) {
+    const coin = this.coins[msg.coinIndex];
+    if (!coin) return;
+    coin.setLinvel({ x: msg.vx, y: msg.vy }, true);
+    this.applyKickState(msg.coinIndex);
+  }
+
+  private applyKickState(idx: number) {
     this.state.lastKickedCoinIndex = idx;
     this.state.phase = 'simulating';
     this.splitDetected = false;
