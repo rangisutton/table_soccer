@@ -32,6 +32,8 @@ export class MenuScene extends Phaser.Scene {
   private pendingPairFrom: string | null = null; // incoming pair requester
   private pendingPairTo: string | null = null;   // outgoing pair target
   private onlineStatusEl: HTMLDivElement | null = null; // small status bar under buttons
+  private playTxt: Phaser.GameObjects.Text | null = null;
+  private handlersRegistered = false;
 
   // Stored handler refs for net.off() cleanup
   private readonly handleUserList      = (msg: Extract<ServerMsg, { type: 'user-list' }>)            => this.onUserList(msg);
@@ -148,18 +150,26 @@ export class MenuScene extends Phaser.Scene {
     y += controls.length * 50 + 20;
 
     // ── Play button ──────────────────────────────────────────────────────────
+    const pairedNow = net.connected && !!net.partner;
     const playBg = this.add.rectangle(CX - 68, y, 120, 52, 0x000000, 0)
       .setStrokeStyle(2, C_GOLD).setInteractive({ useHandCursor: true });
-    const playTxt = this.add.text(CX - 68, y, 'PLAY', {
-      fontSize: '28px', fontFamily: 'monospace', fontStyle: 'bold', color: '#ffcc00',
+    this.playTxt = this.add.text(CX - 68, y, pairedNow ? 'PLAY\nONLINE' : 'PLAY', {
+      fontSize: pairedNow ? '16px' : '28px', fontFamily: 'monospace', fontStyle: 'bold', color: '#ffcc00',
+      align: 'center',
     }).setOrigin(0.5, 0.5);
 
-    playBg.on('pointerover', () => { playBg.setFillStyle(C_GOLD, 0.15); playTxt.setColor('#ffffff'); });
-    playBg.on('pointerout',  () => { playBg.setFillStyle(0, 0);        playTxt.setColor('#ffcc00'); });
+    playBg.on('pointerover', () => { playBg.setFillStyle(C_GOLD, 0.15); this.playTxt!.setColor('#ffffff'); });
+    playBg.on('pointerout',  () => { playBg.setFillStyle(0, 0);         this.playTxt!.setColor('#ffcc00'); });
     playBg.on('pointerup',   () => {
       this.registry.set('gameConfig', { ...this.cfg });
       this.registry.set('level', this.selectedLevel);
-      this.registry.set('netMode', false);
+      if (net.connected && net.partner) {
+        net.send({ type: 'select-level', levelId: this.selectedLevel.id });
+        this.registry.set('netMode', true);
+        this.registry.set('netPlayerIndex', 0);
+      } else {
+        this.registry.set('netMode', false);
+      }
       this.scene.start('GameScene');
     });
 
@@ -174,15 +184,10 @@ export class MenuScene extends Phaser.Scene {
     onlineBg.on('pointerout',  () => { onlineBg.setFillStyle(0, 0);         onlineTxt.setColor('#00ffee'); });
     onlineBg.on('pointerup',   () => this.openLobby());
 
-    // If already connected from a previous scene visit, restore lobby state
+    // Restore online status if already connected from a previous scene visit
     if (net.connected) {
       this.registerNetHandlers();
-      if (net.partner) {
-        this.showOnlineStatus(`Paired with ${net.partner}`);
-        // Re-register select-level handler so partner's game start is caught
-      } else {
-        this.showOnlineStatus(`Online as ${net.myName}`);
-      }
+      this.showOnlineStatus(net.partner ? `Paired with ${net.partner}` : `Online as ${net.myName}`);
     }
 
     y += 60;
@@ -192,11 +197,13 @@ export class MenuScene extends Phaser.Scene {
 
     this.highlightSelected();
 
-    // Clean up lobby DOM on scene shutdown
+    // Clean up on scene shutdown
     this.events.on('shutdown', () => {
-      this.closeLobby();
+      this.lobbyEl?.remove();
+      this.lobbyEl = null;
       this.onlineStatusEl?.remove();
       this.onlineStatusEl = null;
+      this.unregisterNetHandlers();
     });
   }
 
@@ -220,14 +227,15 @@ export class MenuScene extends Phaser.Scene {
       this.lobbyState = 'name-entry';
     }
 
+    // Handlers may already be registered (e.g. returned from GameScene)
     this.registerNetHandlers();
     this.renderLobby();
   }
 
   private closeLobby() {
+    // Only remove the DOM overlay — keep net handlers active for the scene's lifetime
     this.lobbyEl?.remove();
     this.lobbyEl = null;
-    this.unregisterNetHandlers();
   }
 
   private renderLobby(extra?: string) {
@@ -395,8 +403,9 @@ export class MenuScene extends Phaser.Scene {
         unpairBtn.addEventListener('click', () => {
           net.send({ type: 'unpair' });
           this.lobbyState = 'lobby';
-          this.renderLobby();
+          this.closeLobby();
           this.showOnlineStatus(`Online as ${net.myName}`);
+          if (this.playTxt) { this.playTxt.setText('PLAY'); this.playTxt.setFontSize(28); }
         });
         startRow.appendChild(unpairBtn);
         break;
@@ -434,6 +443,8 @@ export class MenuScene extends Phaser.Scene {
   // ─── Net handlers ─────────────────────────────────────────────────────────────
 
   private registerNetHandlers() {
+    if (this.handlersRegistered) return;
+    this.handlersRegistered = true;
     net.on('user-list',            this.handleUserList);
     net.on('pair-request',         this.handlePairRequest);
     net.on('paired',               this.handlePaired);
@@ -444,6 +455,8 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private unregisterNetHandlers() {
+    if (!this.handlersRegistered) return;
+    this.handlersRegistered = false;
     net.off('user-list',            this.handleUserList);
     net.off('pair-request',         this.handlePairRequest);
     net.off('paired',               this.handlePaired);
@@ -520,8 +533,14 @@ export class MenuScene extends Phaser.Scene {
     this.pendingPairTo = null;
     this.pendingPairFrom = null;
     this.lobbyState = 'paired';
-    this.renderLobby();
-    this.showOnlineStatus(`Paired with ${net.partner}`);
+    // Close the lobby overlay — level selection happens on the main menu
+    this.closeLobby();
+    this.showOnlineStatus(`Paired with ${net.partner} — pick a level and PLAY`);
+    // Update PLAY button to show paired state
+    if (this.playTxt) {
+      this.playTxt.setText('PLAY\nONLINE');
+      this.playTxt.setFontSize(16);
+    }
   }
 
   private onPairRejected(msg: Extract<ServerMsg, { type: 'pair-rejected' }>) {
@@ -534,6 +553,7 @@ export class MenuScene extends Phaser.Scene {
     this.lobbyState = 'lobby';
     if (this.lobbyEl) this.renderLobby('Partner unpairing.');
     this.showOnlineStatus(`Online as ${net.myName}`);
+    if (this.playTxt) { this.playTxt.setText('PLAY'); this.playTxt.setFontSize(28); }
   }
 
   private onPartnerDisconnected(_msg: Extract<ServerMsg, { type: 'partner-disconnected' }>) {
@@ -547,6 +567,7 @@ export class MenuScene extends Phaser.Scene {
     this.lobbyState = 'lobby';
     if (this.lobbyEl) this.renderLobby('Partner disconnected.');
     this.showOnlineStatus(`Online as ${net.myName}`);
+    if (this.playTxt) { this.playTxt.setText('PLAY'); this.playTxt.setFontSize(28); }
   }
 
   private onSelectLevel(msg: Extract<ServerMsg, { type: 'select-level' }>) {

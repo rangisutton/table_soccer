@@ -95,6 +95,30 @@ export class GameScene extends Phaser.Scene {
     this.showStatus('Partner left', '#ff4422');
     this.time.delayedCall(1500, () => this.scene.start('MenuScene'));
   };
+  private readonly handleNetSync = (msg: Extract<ServerMsg, { type: 'sync' }>) => {
+    if (this.state.phase !== 'simulating') return;
+    // Snap to authoritative positions, zero velocities
+    msg.positions.forEach((pos, i) => {
+      if (!this.coins[i]) return;
+      this.coins[i].setTranslation(pos, true);
+      this.coins[i].setLinvel({ x: 0, y: 0 }, true);
+    });
+    this.resultHandled = true;
+    // Apply authoritative result
+    if (msg.result === 'foul') {
+      this.onFoul();
+    } else if (msg.result === 'goal') {
+      this.pendingGoal = { scorer: msg.scorer as PlayerId, isOwnGoal: msg.isOwnGoal ?? false };
+      const { scorer, isOwnGoal } = this.pendingGoal;
+      this.pendingGoal = null;
+      this.kickoffMove = false;
+      this.onGoal(scorer, isOwnGoal);
+    } else {
+      this.kickoffMove = false;
+      this.state.phase = 'playing';
+      this.updateUI();
+    }
+  };
 
   constructor() {
     super({ key: 'GameScene' });
@@ -182,11 +206,15 @@ export class GameScene extends Phaser.Scene {
     this.updateUI();
 
     if (this.netMode) {
+      // P1 sees the board from the opposite end — fix their view permanently
+      if (this.netPlayerIndex === 1) this.gameContainer.setRotation(Math.PI);
       net.on('kick',                 this.handleNetKick);
       net.on('partner-disconnected', this.handleNetPartnerDisc);
+      net.on('sync',                 this.handleNetSync);
       this.events.once('shutdown', () => {
         net.off('kick',                 this.handleNetKick);
         net.off('partner-disconnected', this.handleNetPartnerDisc);
+        net.off('sync',                 this.handleNetSync);
       });
     }
   }
@@ -617,6 +645,14 @@ export class GameScene extends Phaser.Scene {
     const cur: Vec2[] = this.coins.map(c => {
       const t = c.translation(); return { x: t.x, y: t.y };
     });
+
+    // Passive player: let physics run for visuals but never determine results —
+    // the active player's client sends an authoritative sync on settlement.
+    if (this.netMode && this.state.attacker !== this.netPlayerIndex) {
+      this.prevCoinPos = cur;
+      return;
+    }
+
     const prev = this.prevCoinPos;
 
     if (prev.length === this.coins.length && !this.resultHandled) {
@@ -666,6 +702,7 @@ export class GameScene extends Phaser.Scene {
         }
         if (escaped) {
           this.resultHandled = true;
+          if (this.netMode) this.sendSync('foul');
           this.onFoul();
         }
       }
@@ -686,11 +723,17 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private sendSync(result: 'play-on' | 'foul' | 'goal', scorer?: number, isOwnGoal?: boolean) {
+    const positions = this.coins.map(c => { const t = c.translation(); return { x: t.x, y: t.y }; });
+    net.send({ type: 'sync', positions, result, scorer, isOwnGoal });
+  }
+
   private onSettled() {
     const isLegal = this.kickoffMove ? this.kickoffHitDetected : this.splitDetected;
 
     if (!isLegal) {
       this.pendingGoal = null;
+      if (this.netMode) this.sendSync('foul');
       this.onFoul();
       return;
     }
@@ -699,11 +742,13 @@ export class GameScene extends Phaser.Scene {
       const { scorer, isOwnGoal } = this.pendingGoal;
       this.pendingGoal = null;
       this.kickoffMove = false;
+      if (this.netMode) this.sendSync('goal', scorer, isOwnGoal);
       this.onGoal(scorer, isOwnGoal);
       return;
     }
 
     // Legal kick, no goal — continue play
+    if (this.netMode) this.sendSync('play-on');
     this.kickoffMove = false;
     this.state.phase = 'playing';
     this.updateUI();
@@ -752,8 +797,15 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private rotateView(attacker: PlayerId, nextPhase: 'kickoff' | 'playing') {
-    const targetRad = attacker === 0 ? 0 : Math.PI;
+  private rotateView(_attacker: PlayerId, nextPhase: 'kickoff' | 'playing') {
+    if (this.netMode) {
+      // Each player has a fixed view — no rotation between turns
+      this.lastFoulCoinIndex = null;
+      this.state.phase = nextPhase;
+      this.updateUI();
+      return;
+    }
+    const targetRad = _attacker === 0 ? 0 : Math.PI;
     this.tweens.add({
       targets: this.gameContainer,
       rotation: targetRad,
