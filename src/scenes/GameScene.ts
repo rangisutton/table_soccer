@@ -7,7 +7,7 @@ import {
 import { GameState, Vec2, GoalPost, PlayerId } from '../types';
 import { GameConfig, DEFAULT_CONFIG } from '../FieldConfig';
 import { LevelDef, EllipseDef, LookDef, LOOKS } from '../LevelDef';
-import { stadiumLevel } from '../levels/stadium';
+import { alienLevel } from '../levels/alien';
 import { GameAudio } from '../Audio';
 
 interface Spark {
@@ -91,7 +91,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   preload() {
-    const level: LevelDef = this.registry.get('level') ?? stadiumLevel;
+    const level: LevelDef = this.registry.get('level') ?? alienLevel;
     if (level.imageUrl) {
       const key = `field_img_${level.id}`;
       this.textures.remove(key); // force reload in case image was updated
@@ -104,7 +104,7 @@ export class GameScene extends Phaser.Scene {
 
   create() {
     this.cfg   = { ...(this.registry.get('gameConfig') ?? DEFAULT_CONFIG) };
-    this.level = this.registry.get('level') ?? stadiumLevel;
+    this.level = this.registry.get('level') ?? alienLevel;
     this.goals = this.level.goals as [GoalPost, GoalPost];
 
     // Apply level coin config over menu settings
@@ -551,6 +551,8 @@ export class GameScene extends Phaser.Scene {
     this.resultHandled = false;
     this.pendingGoal = null;
     this.simFrameCount = 0;
+    // Seed prevCoinPos so frame-1 checks (kickoff hit, goal, escape) are not skipped
+    this.prevCoinPos = this.coins.map(c => { const t = c.translation(); return { x: t.x, y: t.y }; });
     this.updateUI();
   }
 
