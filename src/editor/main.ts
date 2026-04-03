@@ -70,6 +70,9 @@ const state = {
   coinRadius: 10,
   coinKickPower: 1.0,
   coinDrag: 5.0,
+  bgImage: null as HTMLImageElement | null,
+  showBgImage: false,
+  bgImageStatus: 'none' as 'none' | 'loading' | 'loaded' | 'error',
 };
 
 // ─── Computed geometry ────────────────────────────────────────────────────────
@@ -156,6 +159,47 @@ function snap(v: Vec2): Vec2 {
   return { x: Math.round(v.x / GRID) * GRID, y: Math.round(v.y / GRID) * GRID };
 }
 
+// ─── Background image ─────────────────────────────────────────────────────────
+
+function loadBgImage(url: string) {
+  state.bgImageStatus = 'loading';
+  updateBgStatus();
+  const img = new Image();
+  img.onload = () => {
+    state.bgImage = img;
+    state.bgImageStatus = 'loaded';
+    updateBgStatus();
+  };
+  img.onerror = () => {
+    state.bgImage = null;
+    state.bgImageStatus = 'error';
+    updateBgStatus();
+  };
+  img.src = url;
+}
+
+function updateBgStatus() {
+  const el = document.getElementById('bgStatus');
+  if (!el) return;
+  const showCb = document.getElementById('showBgImage') as HTMLInputElement | null;
+  if (state.bgImageStatus === 'loaded') {
+    el.textContent = 'Image loaded';
+    el.style.color = '#00ff88';
+    if (showCb) showCb.disabled = false;
+  } else if (state.bgImageStatus === 'loading') {
+    el.textContent = 'Loading…';
+    el.style.color = '#446688';
+    if (showCb) showCb.disabled = true;
+  } else if (state.bgImageStatus === 'error') {
+    el.textContent = 'Not found';
+    el.style.color = '#ff4422';
+    if (showCb) showCb.disabled = true;
+  } else {
+    el.textContent = '';
+    if (showCb) showCb.disabled = true;
+  }
+}
+
 // ─── Edge split detection ─────────────────────────────────────────────────────
 
 /** Find closest edge on the half-vert polyline within EDGE_HIT. Returns insertion index or -1. */
@@ -193,16 +237,20 @@ function findBlockerEdgeHit(p: Vec2, polyIdx: number): { insertAt: number; point
 
 function draw() {
   ctx.clearRect(0, 0, CW, CH);
+  const showBg = !exportMode && state.showBgImage && state.bgImage !== null;
   if (!exportMode) {
     ctx.fillStyle = '#010118';
     ctx.fillRect(0, 0, CW, CH);
+    if (showBg) {
+      ctx.drawImage(state.bgImage!, 0, 0, CW, CH);
+    }
     drawGrid();
   }
 
   const boundary = fullBoundary();
   if (boundary.length >= 4) {
-    drawFieldFill(boundary);
-    drawHalfTints(boundary);
+    if (!showBg) drawFieldFill(boundary);
+    if (!showBg) drawHalfTints(boundary);
     drawBoundaryBorder(boundary);
   }
 
@@ -211,8 +259,8 @@ function draw() {
     drawMirrorHalf();
     drawUserHalf();
   }
-  drawEllipses();
-  drawBlockers();
+  drawEllipses(showBg);
+  drawBlockers(showBg);
   drawGoals();
   if (!exportMode && boundary.length >= 4) drawStartCoins();
   if (!exportMode) {
@@ -353,7 +401,7 @@ function drawGoals() {
   }
 }
 
-function drawEllipses() {
+function drawEllipses(showBg = false) {
   for (let ei = 0; ei < state.ellipses.length; ei++) {
     const e = state.ellipses[ei];
     const isSel = state.selectedEllipseIdx === ei;
@@ -371,8 +419,7 @@ function drawEllipses() {
       ctx.lineWidth = 1.5;
       ctx.stroke();
     } else {
-      ctx.fillStyle = 'rgba(255,0,204,0.06)';
-      ctx.fill();
+      if (!showBg) { ctx.fillStyle = 'rgba(255,0,204,0.06)'; ctx.fill(); }
       ctx.strokeStyle = 'rgba(255,0,204,0.35)';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 3]);
@@ -387,8 +434,12 @@ function drawEllipses() {
     ctx.rotate(e.angle);
     ctx.beginPath();
     ctx.ellipse(0, 0, e.rx, e.ry, 0, 0, Math.PI * 2);
-    ctx.fillStyle = exportMode ? '#888888' : selActive ? 'rgba(0,200,255,0.08)' : 'rgba(3,3,32,0.85)';
-    ctx.fill();
+    if (exportMode) {
+      ctx.fillStyle = '#888888'; ctx.fill();
+    } else if (!showBg) {
+      ctx.fillStyle = selActive ? 'rgba(0,200,255,0.08)' : 'rgba(3,3,32,0.85)';
+      ctx.fill();
+    }
     ctx.strokeStyle = selActive ? '#00ccff' : '#446688';
     ctx.lineWidth = selActive ? 2 : 1.5;
     ctx.stroke();
@@ -405,7 +456,7 @@ function drawEllipses() {
   }
 }
 
-function drawBlockers() {
+function drawBlockers(showBg = false) {
   // Draw mirrors first (behind)
   for (const { verts, isMirror } of allBlockers()) {
     if (!isMirror) continue;
@@ -418,12 +469,13 @@ function drawBlockers() {
       for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
       ctx.closePath(); ctx.fill(); ctx.stroke();
     } else {
-      ctx.fillStyle = 'rgba(255,0,204,0.06)';
       ctx.strokeStyle = 'rgba(255,0,204,0.35)';
       ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
       ctx.beginPath(); ctx.moveTo(verts[0].x, verts[0].y);
       for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.closePath();
+      if (!showBg) { ctx.fillStyle = 'rgba(255,0,204,0.06)'; ctx.fill(); }
+      ctx.stroke();
       ctx.setLineDash([]);
     }
   }
@@ -432,12 +484,18 @@ function drawBlockers() {
     const b = state.blockers[bi];
     const isSelected = state.selectedBlockerIdx === bi;
     if (b.length === 0) continue;
-    ctx.fillStyle = exportMode ? '#888888' : isSelected ? 'rgba(0,200,255,0.08)' : 'rgba(3,3,32,0.85)';
     ctx.strokeStyle = isSelected ? '#00ccff' : '#446688';
     ctx.lineWidth = isSelected ? 2 : 1.5;
     ctx.beginPath(); ctx.moveTo(b[0].x, b[0].y);
     for (let i = 1; i < b.length; i++) ctx.lineTo(b[i].x, b[i].y);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.closePath();
+    if (exportMode) {
+      ctx.fillStyle = '#888888'; ctx.fill();
+    } else if (!showBg) {
+      ctx.fillStyle = isSelected ? 'rgba(0,200,255,0.08)' : 'rgba(3,3,32,0.85)';
+      ctx.fill();
+    }
+    ctx.stroke();
   }
   // Active (in-progress) blocker
   if (state.activeBlocker && state.activeBlocker.length > 0) {
@@ -855,6 +913,19 @@ document.getElementById('btnSave')!.addEventListener('click', async () => {
   save();
 });
 
+document.getElementById('btnLoadBg')!.addEventListener('click', () => {
+  const slug = toSlug(state.levelName || 'my-field');
+  if (!slug) { updateBgStatus(); return; }
+  const url = `/field-images/${slug}.png`;
+  state.imageUrl = url;
+  loadBgImage(url);
+  save();
+});
+
+(document.getElementById('showBgImage') as HTMLInputElement).addEventListener('change', (e) => {
+  state.showBgImage = (e.target as HTMLInputElement).checked;
+});
+
 function setStatus(msg: string, type: 'ok' | 'error' | 'info') {
   const el = document.getElementById('saveStatus')!;
   el.textContent = msg;
@@ -1008,6 +1079,14 @@ function applyState(s: ReturnType<typeof editorStateForSave>) {
   updateDeleteBlockerBtn();
   updateEllipseDeleteBtn();
   updateCoinConfigUI();
+  // Auto-load bg image if we have a URL
+  if (state.imageUrl) {
+    loadBgImage(state.imageUrl);
+  } else {
+    state.bgImage = null;
+    state.bgImageStatus = 'none';
+    updateBgStatus();
+  }
 }
 
 function save() {
@@ -1047,6 +1126,7 @@ updateGoalUI();
 updateDeleteBlockerBtn();
 updateEllipseDeleteBtn();
 updateCoinConfigUI();
+updateBgStatus();
 
 function loop() { draw(); requestAnimationFrame(loop); }
 loop();
