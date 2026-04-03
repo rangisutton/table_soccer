@@ -70,6 +70,7 @@ export class GameScene extends Phaser.Scene {
   private domP2Status!: HTMLElement;
   private domP1Pips!: HTMLElement;
   private domP2Pips!: HTMLElement;
+  private domTurnBar!: HTMLElement;
 
   // Drag input
   private dragging = false;
@@ -90,6 +91,45 @@ export class GameScene extends Phaser.Scene {
   // Network mode
   private netMode = false;
   private netPlayerIndex: 0 | 1 = 0;
+  private pairRequestDialog: HTMLDivElement | null = null;
+
+  private readonly handlePairRequestInGame = (msg: Extract<ServerMsg, { type: 'pair-request' }>) => {
+    if (this.pairRequestDialog) return;
+    const d = document.createElement('div');
+    this.pairRequestDialog = d;
+    Object.assign(d.style, {
+      position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+      background: '#05051e', border: '1px solid #00ffee66',
+      padding: '28px 36px', zIndex: '300', fontFamily: 'monospace', textAlign: 'center',
+      minWidth: '260px',
+    });
+    const title = document.createElement('div');
+    title.textContent = `${msg.from} wants to play!`;
+    Object.assign(title.style, { color: '#00ffee', fontSize: '15px', letterSpacing: '2px', marginBottom: '20px' });
+    d.appendChild(title);
+    const mkBtn = (label: string, color: string, onClick: () => void) => {
+      const b = document.createElement('button');
+      Object.assign(b.style, {
+        background: 'transparent', border: `1px solid ${color}`, color,
+        fontFamily: 'monospace', fontSize: '13px', letterSpacing: '2px',
+        padding: '8px 18px', cursor: 'pointer', margin: '0 6px',
+      });
+      b.textContent = label;
+      b.addEventListener('click', onClick);
+      d.appendChild(b);
+    };
+    mkBtn('ACCEPT', '#00ffee', () => {
+      net.send({ type: 'pair-accept', target: msg.from });
+      d.remove(); this.pairRequestDialog = null;
+      this.scene.start('MenuScene');
+    });
+    mkBtn('DECLINE', '#ff4422', () => {
+      net.send({ type: 'pair-reject', target: msg.from });
+      d.remove(); this.pairRequestDialog = null;
+    });
+    document.body.appendChild(d);
+  };
+
   private readonly handleNetKick = (msg: Extract<ServerMsg, { type: 'kick' }>) => this.applyNetworkKick(msg);
   private readonly handleNetPosStream = (msg: Extract<ServerMsg, { type: 'pos-stream' }>) => {
     if (this.state.phase !== 'simulating') return;
@@ -209,9 +249,14 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-ESC', () => this.scene.start('MenuScene'));
     this.input.keyboard?.on('keydown-F1',  (e: KeyboardEvent) => { e.preventDefault(); this.scene.restart(); });
 
-    this.createSettingsPanel();
+    // this.createSettingsPanel();  // hidden until needed for level testing
     this.draw();
     this.updateUI();
+
+    // Pair-request interrupt: works even in offline games if player is connected
+    if (net.connected) {
+      net.on('pair-request', this.handlePairRequestInGame);
+    }
 
     if (this.netMode) {
       // P1 sees the board from the opposite end — fix their view permanently
@@ -220,13 +265,19 @@ export class GameScene extends Phaser.Scene {
       net.on('pos-stream',           this.handleNetPosStream);
       net.on('partner-disconnected', this.handleNetPartnerDisc);
       net.on('sync',                 this.handleNetSync);
-      this.events.once('shutdown', () => {
+    }
+
+    this.events.once('shutdown', () => {
+      this.pairRequestDialog?.remove();
+      this.pairRequestDialog = null;
+      net.off('pair-request', this.handlePairRequestInGame);
+      if (this.netMode) {
         net.off('kick',                 this.handleNetKick);
         net.off('pos-stream',           this.handleNetPosStream);
         net.off('partner-disconnected', this.handleNetPartnerDisc);
         net.off('sync',                 this.handleNetSync);
-      });
-    }
+      }
+    });
   }
 
   // ─── UI ──────────────────────────────────────────────────────────────────────
@@ -239,10 +290,43 @@ export class GameScene extends Phaser.Scene {
     this.domP1Pips   = document.getElementById('p1-pips')!;
     this.domP2Pips   = document.getElementById('p2-pips')!;
 
+    // Show scoreboard panels (hidden by default on menu)
+    document.getElementById('panel-left')!.style.display  = '';
+    document.getElementById('panel-right')!.style.display = '';
+
+    // Set player names
+    if (this.netMode) {
+      const p0Name = this.netPlayerIndex === 0 ? net.myName! : net.partner!;
+      const p1Name = this.netPlayerIndex === 0 ? net.partner! : net.myName!;
+      document.querySelector('#panel-left  .player-name')!.textContent = p0Name;
+      document.querySelector('#panel-right .player-name')!.textContent = p1Name;
+    } else {
+      document.querySelector('#panel-left  .player-name')!.textContent = 'Player 1';
+      document.querySelector('#panel-right .player-name')!.textContent = 'Player 2';
+    }
+
+    // "X playing" bar at bottom of screen
+    this.domTurnBar = document.createElement('div');
+    Object.assign(this.domTurnBar.style, {
+      position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)',
+      fontFamily: 'monospace', fontSize: '20px', letterSpacing: '3px',
+      color: '#00ffee', textShadow: '0 0 12px #00ffee88',
+      pointerEvents: 'none', zIndex: '60',
+    });
+    document.body.appendChild(this.domTurnBar);
+
     this.statusText = this.add.text(CX, CY, '', {
       fontSize: '64px', fontFamily: 'monospace', fontStyle: 'bold',
       color: '#ffffff', stroke: '#000022', strokeThickness: 10, align: 'center',
     }).setOrigin(0.5, 0.5).setAlpha(0).setDepth(55);
+
+    this.events.once('shutdown', () => {
+      this.domTurnBar.remove();
+      document.getElementById('panel-left')!.style.display  = 'none';
+      document.getElementById('panel-right')!.style.display = 'none';
+      document.querySelector('#panel-left  .player-name')!.textContent = 'Player 1';
+      document.querySelector('#panel-right .player-name')!.textContent = 'Player 2';
+    });
   }
 
   private updateUI() {
@@ -276,6 +360,7 @@ export class GameScene extends Phaser.Scene {
       const winner = scores[0] >= WIN_GOALS ? 0 : 1;
       this.domP1Status.textContent = winner === 0 ? 'Winner!' : '';
       this.domP2Status.textContent = winner === 1 ? 'Winner!' : '';
+      this.domTurnBar.textContent = '';
     } else {
       const activeStatus = (
         phase === 'kickoff' ? 'Kick off!' :
@@ -283,6 +368,23 @@ export class GameScene extends Phaser.Scene {
       );
       this.domP1Status.textContent = attacker === 0 ? activeStatus : '';
       this.domP2Status.textContent = attacker === 1 ? activeStatus : '';
+
+      // Bottom turn bar
+      if (phase === 'simulating' || phase === 'foul' || phase === 'goal') {
+        this.domTurnBar.textContent = '';
+      } else {
+        let activeName: string;
+        if (this.netMode) {
+          const p0Name = this.netPlayerIndex === 0 ? net.myName! : net.partner!;
+          const p1Name = this.netPlayerIndex === 0 ? net.partner! : net.myName!;
+          activeName = attacker === 0 ? p0Name : p1Name;
+        } else {
+          activeName = attacker === 0 ? 'Player 1' : 'Player 2';
+        }
+        this.domTurnBar.textContent = `${activeName} playing`;
+        this.domTurnBar.style.color = attacker === 0 ? '#00ffee' : '#ff00cc';
+        this.domTurnBar.style.textShadow = attacker === 0 ? '0 0 12px #00ffee88' : '0 0 12px #ff00cc88';
+      }
     }
   }
 
@@ -820,12 +922,12 @@ export class GameScene extends Phaser.Scene {
     this.state.lastKickedCoinIndex = null;
     this.updateUI();
     if (wasKickoff) {
-      this.time.delayedCall(1200, () => {
+      this.time.delayedCall(400, () => {
         this.placeKickoff();
         this.rotateView(this.state.attacker, 'kickoff');
       });
     } else {
-      this.time.delayedCall(1200, () => this.rotateView(this.state.attacker, 'playing'));
+      this.time.delayedCall(400, () => this.rotateView(this.state.attacker, 'playing'));
     }
   }
 
@@ -1184,12 +1286,14 @@ export class GameScene extends Phaser.Scene {
 
   /**
    * Coin glow states:
-   *   green  — ready to kick
+   *   green  — ready to kick (your turn)
+   *   yellow — ready to kick (opponent's turn — not yours to touch)
    *   blue   — bystander / legally resolved
    *   red    — being kicked / kicked without legal split yet
    */
-  private coinGlowState(i: number): 'green' | 'blue' | 'red' {
+  private coinGlowState(i: number): 'green' | 'yellow' | 'blue' | 'red' {
     const { phase, lastKickedCoinIndex } = this.state;
+    const opponentTurn = this.netMode && this.state.attacker !== this.netPlayerIndex;
 
     // As soon as a coin is clicked/dragged, it goes red; the others go blue
     if (this.dragging) {
@@ -1197,11 +1301,11 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (phase === 'kickoff') {
-      return i === 0 ? 'green' : 'blue';
+      return i === 0 ? (opponentTurn ? 'yellow' : 'green') : 'blue';
     }
 
     if (phase === 'playing') {
-      return i === lastKickedCoinIndex ? 'blue' : 'green';
+      return i === lastKickedCoinIndex ? 'blue' : (opponentTurn ? 'yellow' : 'green');
     }
 
     if (phase === 'simulating') {
@@ -1220,9 +1324,10 @@ export class GameScene extends Phaser.Scene {
     g.clear();
 
     const PAL: Record<string, { glow: number; body: number; rim: number }> = {
-      green: { glow: 0x00ff44, body: 0xccffdd, rim: 0x00ff44 },
-      blue:  { glow: 0x0088ff, body: 0xaaccff, rim: 0x0088ff },
-      red:   { glow: 0xff2200, body: 0xffcccc, rim: 0xff2200 },
+      green:  { glow: 0x00ff44, body: 0xccffdd, rim: 0x00ff44 },
+      yellow: { glow: 0xffcc00, body: 0xfff0bb, rim: 0xffcc00 },
+      blue:   { glow: 0x0088ff, body: 0xaaccff, rim: 0x0088ff },
+      red:    { glow: 0xff2200, body: 0xffcccc, rim: 0xff2200 },
     };
 
     for (let i = 0; i < this.coins.length; i++) {
