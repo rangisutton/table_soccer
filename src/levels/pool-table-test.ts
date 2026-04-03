@@ -17,7 +17,7 @@ export const poolTableTestLevel: LevelDef = {
     { x: 700, y: 20 },
     { x: 520, y: 20 },
   ],
-  blockers: [],
+  polys: [],
   ellipses: [
     { x: 99, y: 398, rx: 20, ry: 20, angle: 0.0000 },
     { x: 100, y: 20, rx: 20, ry: 20, angle: 0.0000 },

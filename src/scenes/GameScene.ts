@@ -6,7 +6,7 @@ import {
 } from '../config';
 import { GameState, Vec2, GoalPost, PlayerId } from '../types';
 import { GameConfig, DEFAULT_CONFIG } from '../FieldConfig';
-import { LevelDef, EllipseDef, LookDef, LOOKS } from '../LevelDef';
+import { LevelDef, EllipseDef, PolyDef, BoundaryPoint, LookDef, LOOKS } from '../LevelDef';
 import { alienLevel } from '../levels/alien';
 import { GameAudio } from '../Audio';
 import { net, ServerMsg } from '../net';
@@ -34,7 +34,12 @@ export class GameScene extends Phaser.Scene {
   private coins: RAPIER.RigidBody[] = [];
   private rapierWorld!: RAPIER.World;
   private eventQueue!: RAPIER.EventQueue;
-  private colliderLabels = new Map<number, string>(); // collider handle → 'coin'|'wall'|'obstacle'
+  private colliderLabels = new Map<number, string>(); // collider handle → 'coin'|'wall'|'sink'
+
+  // Sink mechanic
+  private sinkEdges: { a: BoundaryPoint; b: BoundaryPoint }[] = [];
+  private sinkingCoins = new Map<number, { respawnX: number; respawnY: number; frame: number }>();
+  private static readonly SINK_FADE_FRAMES = 15;
   private goals!: [GoalPost, GoalPost];
   private state!: GameState;
 
@@ -210,6 +215,7 @@ export class GameScene extends Phaser.Scene {
     this.rapierWorld = new RAPIER.World({ x: 0, y: 0 });
     this.eventQueue = new RAPIER.EventQueue(true);
     this.colliderLabels = new Map();
+    this.sinkingCoins.clear();
 
     this.state = {
       phase: 'kickoff',
@@ -530,8 +536,10 @@ export class GameScene extends Phaser.Scene {
   // ─── Physics walls ────────────────────────────────────────────────────────────
 
   private buildWalls() {
-    const { boundary, goals, blockers } = this.level;
+    const { boundary, goals, polys } = this.level;
     const n = boundary.length;
+
+    this.sinkEdges = [];
 
     // Build a set of edge indices that are goal openings — skip those
     const goalEdgeMids = new Set<string>();
@@ -549,10 +557,16 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Boundary walls (skip goal edges)
+    // Boundary walls (skip goal edges; sink edges become detection segments, not walls)
     for (let i = 0; i < n; i++) {
       if (goalEdgeMids.has(i.toString())) continue;
-      this.addWall(boundary[i], boundary[(i + 1) % n]);
+      const a = boundary[i] as BoundaryPoint;
+      const b = boundary[(i + 1) % n] as BoundaryPoint;
+      if (a.edgeMode === 'sink') {
+        this.sinkEdges.push({ a, b });
+      } else {
+        this.addWall(a, b);
+      }
     }
 
     // Goal spokes
@@ -561,25 +575,31 @@ export class GameScene extends Phaser.Scene {
       this.addWall(goal.rightBase, goal.rightTip);
     }
 
-    // Blockers — shift walls inward (toward centroid) so the outer face sits on
+    // Polys — shift walls inward (toward centroid) so the outer face sits on
     // the drawn edge and coins approaching from the field hit the correct surface.
-    // For field levels, also add the 180° mirrored copy of each blocker.
-    const allBlockers = this.level.type === 'field'
-      ? [...blockers, ...blockers.map(b => b.map(v => ({ x: 2 * CX - v.x, y: 2 * CY - v.y })))]
-      : blockers;
+    // For field levels, also add the 180° mirrored copy of each poly.
+    const mirrorPoly = (p: PolyDef): PolyDef => ({
+      ...p, verts: p.verts.map(v => ({ x: 2 * CX - v.x, y: 2 * CY - v.y })),
+    });
+    const allPolys: PolyDef[] = this.level.type === 'field'
+      ? [...polys, ...polys.map(mirrorPoly)]
+      : polys;
 
-    for (const blocker of allBlockers) {
-      const m = blocker.length;
-      const centX = blocker.reduce((s, v) => s + v.x, 0) / m;
-      const centY = blocker.reduce((s, v) => s + v.y, 0) / m;
+    for (const poly of allPolys) {
+      const { verts, mode } = poly;
+      const m = verts.length;
+      const label = mode === 'sink' ? 'sink' : 'wall';
+      const restitution = mode === 'sink' ? 0.0 : 1.0;
+      const centX = verts.reduce((s, v) => s + v.x, 0) / m;
+      const centY = verts.reduce((s, v) => s + v.y, 0) / m;
       for (let i = 0; i < m; i++) {
-        const a = blocker[i], b = blocker[(i + 1) % m];
-        if (Math.hypot(b.x - a.x, b.y - a.y) < 1) continue; // skip duplicate/zero-length edges
-        this.addWall(a, b, centX, centY, true);
+        const a = verts[i], b = verts[(i + 1) % m];
+        if (Math.hypot(b.x - a.x, b.y - a.y) < 1) continue; // skip zero-length edges
+        this.addWall(a, b, centX, centY, true, label, restitution);
       }
     }
 
-    // Ellipse blockers — approximated as convex polygon colliders
+    // Ellipse obstacles — approximated as convex polygon colliders
     const srcEllipses = this.level.ellipses ?? [];
     const allEllipses: EllipseDef[] = this.level.type === 'field'
       ? [...srcEllipses, ...srcEllipses.map(e => ({ ...e, x: 2 * CX - e.x, y: 2 * CY - e.y }))]
@@ -600,15 +620,16 @@ export class GameScene extends Phaser.Scene {
       pts[i * 2]     = e.x + lx * cos - ly * sin;
       pts[i * 2 + 1] = e.y + lx * sin + ly * cos;
     }
+    const isSink = e.mode === 'sink';
     const body = this.rapierWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     const hull = RAPIER.ColliderDesc.convexHull(pts);
     if (!hull) return;
     const col = this.rapierWorld.createCollider(
-      hull.setRestitution(1.0).setFriction(0.0)
+      hull.setRestitution(isSink ? 0.0 : 1.0).setFriction(0.0)
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       body,
     );
-    this.colliderLabels.set(col.handle, 'wall');
+    this.colliderLabels.set(col.handle, isSink ? 'sink' : 'wall');
   }
 
   /**
@@ -618,7 +639,7 @@ export class GameScene extends Phaser.Scene {
    * Length is extended by the wall thickness at each end to overlap corners
    * and close the seam gap between adjacent segments.
    */
-  private addWall(a: Vec2, b: Vec2, refX = CX, refY = CY, inward = false) {
+  private addWall(a: Vec2, b: Vec2, refX = CX, refY = CY, inward = false, label = 'wall', restitution = 1.0) {
     // CCD on coins handles tunneling — walls can be thinner than Matter.js needed
     const t = 20;
     const dx = b.x - a.x, dy = b.y - a.y;
@@ -644,11 +665,11 @@ export class GameScene extends Phaser.Scene {
     );
     const col = this.rapierWorld.createCollider(
       RAPIER.ColliderDesc.cuboid((len + t) / 2, t / 2)
-        .setRestitution(1.0).setFriction(0.0)
+        .setRestitution(restitution).setFriction(0.0)
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       body,
     );
-    this.colliderLabels.set(col.handle, 'wall');
+    this.colliderLabels.set(col.handle, label);
   }
 
   // ─── Coin placement ───────────────────────────────────────────────────────────
@@ -813,6 +834,27 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (this.state.phase === 'simulating') {
+      // Tick sink fade animations — when done, call onFoul
+      if (this.sinkingCoins.size > 0) {
+        let allDone = true;
+        for (const [, data] of this.sinkingCoins) {
+          data.frame++;
+          if (data.frame < GameScene.SINK_FADE_FRAMES) allDone = false;
+        }
+        if (allDone) {
+          // Snap sinking coins to respawn positions before foul resets everything
+          for (const [ci, data] of this.sinkingCoins) {
+            this.coins[ci].setTranslation({ x: data.respawnX, y: data.respawnY }, true);
+            this.coins[ci].setLinvel({ x: 0, y: 0 }, true);
+          }
+          this.sinkingCoins.clear();
+          if (this.netMode) this.sendSync('foul');
+          this.onFoul();
+          this.draw();
+          return;
+        }
+      }
+
       if (!passiveWatching) {
         this.runSimulationChecks();
         // Stream authoritative positions + glow flags to passive partner (~20Hz to avoid flooding)
@@ -884,6 +926,18 @@ export class GameScene extends Phaser.Scene {
             if (segmentsIntersect(prev[ci], cur[ci], goal.leftTip, goal.rightTip)) {
               this.pendingGoal = { scorer: goal.scorer, isOwnGoal: goal.scorer !== this.state.attacker };
               break outer;
+            }
+          }
+        }
+      }
+      // Boundary sink edge detection — coin crosses a no-wall boundary edge
+      if (!this.resultHandled) {
+        outer2: for (const edge of this.sinkEdges) {
+          for (let ci = 0; ci < this.coins.length; ci++) {
+            if (!prev[ci]) continue;
+            if (segmentsIntersect(prev[ci], cur[ci], edge.a, edge.b)) {
+              this.triggerSink(ci, prev[ci].x, prev[ci].y);
+              break outer2;
             }
           }
         }
@@ -1035,10 +1089,11 @@ export class GameScene extends Phaser.Scene {
       const bIsCoin = label2 === 'coin';
       const aIsWall = label1 === 'wall' || label1 === 'obstacle';
       const bIsWall = label2 === 'wall' || label2 === 'obstacle';
+      const aIsSink = label1 === 'sink';
+      const bIsSink = label2 === 'sink';
 
       if (aIsCoin && bIsCoin) {
         const va = body1.linvel(), vb = body2.linvel();
-        // Rapier velocity is px/s; scale thresholds accordingly (×60 vs old px/frame)
         const spd = Math.hypot(va.x - vb.x, va.y - vb.y);
         if (spd < 30) return;
         const p1 = body1.translation(), p2 = body2.translation();
@@ -1053,8 +1108,21 @@ export class GameScene extends Phaser.Scene {
         const p = coinBody.translation();
         this.audio.wallClick(Math.min(spd / 840, 1));
         if (spd > 180) this.emitCollisionFX(p.x, p.y, spd, 'wall');
+      } else if ((aIsCoin && bIsSink) || (bIsCoin && aIsSink)) {
+        const coinBody = aIsCoin ? body1 : body2;
+        const ci = this.coins.findIndex(c => c.handle === coinBody.handle);
+        if (ci >= 0) {
+          const pos = coinBody.translation();
+          this.triggerSink(ci, pos.x, pos.y);
+        }
       }
     });
+  }
+
+  private triggerSink(ci: number, respawnX: number, respawnY: number) {
+    if (this.resultHandled || this.sinkingCoins.has(ci)) return;
+    this.resultHandled = true;
+    this.sinkingCoins.set(ci, { respawnX, respawnY, frame: 0 });
   }
 
   private emitCollisionFX(wx: number, wy: number, spd: number, source: 'coin' | 'wall') {
@@ -1189,43 +1257,54 @@ export class GameScene extends Phaser.Scene {
       this.drawGoal(g, this.goals[gi], gi === 0 ? C_CYAN : C_MAGENTA);
     }
 
-    // ── Blockers (polygon) ──
-    const allPolyBlockers = this.level.type === 'field'
-      ? [...this.level.blockers, ...this.level.blockers.map(b => b.map(v => ({ x: 2 * CX - v.x, y: 2 * CY - v.y })))]
-      : this.level.blockers;
+    // ── Polys ──
+    const mirrorPoly = (p: import('../LevelDef').PolyDef) => ({
+      ...p, verts: p.verts.map((v: Vec2) => ({ x: 2 * CX - v.x, y: 2 * CY - v.y })),
+    });
+    const allPolys = this.level.type === 'field'
+      ? [...this.level.polys, ...this.level.polys.map(mirrorPoly)]
+      : this.level.polys;
 
-    for (const blocker of allPolyBlockers) {
-      const bverts = blocker.map(v => this.worldToLocal(v.x, v.y));
+    for (const poly of allPolys) {
+      const bverts = poly.verts.map(v => this.worldToLocal(v.x, v.y));
       if (bverts.length < 2) continue;
-      g.fillStyle(C_DARK, 1);
-      g.beginPath();
-      g.moveTo(bverts[0].x, bverts[0].y);
-      for (let i = 1; i < bverts.length; i++) g.lineTo(bverts[i].x, bverts[i].y);
-      g.closePath(); g.fillPath();
-      g.lineStyle(6, 0x334455, 0.4);
-      g.beginPath();
-      g.moveTo(bverts[0].x, bverts[0].y);
-      for (let i = 1; i < bverts.length; i++) g.lineTo(bverts[i].x, bverts[i].y);
-      g.closePath(); g.strokePath();
-      g.lineStyle(2, 0x446688, 0.9);
-      g.beginPath();
-      g.moveTo(bverts[0].x, bverts[0].y);
-      for (let i = 1; i < bverts.length; i++) g.lineTo(bverts[i].x, bverts[i].y);
-      g.closePath(); g.strokePath();
+      const isSink = poly.mode === 'sink';
+      this.drawPolyObstacle(g, bverts, isSink);
     }
 
-    // ── Blockers (ellipse) ──
+    // ── Ellipses ──
     const srcEllipses = this.level.ellipses ?? [];
     const allEllipses: EllipseDef[] = this.level.type === 'field'
       ? [...srcEllipses, ...srcEllipses.map(e => ({ ...e, x: 2 * CX - e.x, y: 2 * CY - e.y }))]
       : srcEllipses;
 
     for (const ell of allEllipses) {
-      this.drawEllipseBlocker(g, ell);
+      this.drawEllipseObstacle(g, ell);
     }
   }
 
-  private drawEllipseBlocker(g: Phaser.GameObjects.Graphics, e: EllipseDef) {
+  /** Draw a polygon obstacle (block = solid blue-grey, sink = orange drain) */
+  private drawPolyObstacle(g: Phaser.GameObjects.Graphics, verts: Vec2[], isSink: boolean) {
+    const fill  = isSink ? 0x1a0800 : C_DARK;
+    const glow  = isSink ? 0xff6600 : 0x334455;
+    const line  = isSink ? 0xff6600 : 0x446688;
+    const glowA = isSink ? 0.5 : 0.4;
+    const lineA = isSink ? 0.9 : 0.9;
+    g.fillStyle(fill, 1);
+    g.beginPath(); g.moveTo(verts[0].x, verts[0].y);
+    for (let i = 1; i < verts.length; i++) g.lineTo(verts[i].x, verts[i].y);
+    g.closePath(); g.fillPath();
+    g.lineStyle(6, glow, glowA);
+    g.beginPath(); g.moveTo(verts[0].x, verts[0].y);
+    for (let i = 1; i < verts.length; i++) g.lineTo(verts[i].x, verts[i].y);
+    g.closePath(); g.strokePath();
+    g.lineStyle(2, line, lineA);
+    g.beginPath(); g.moveTo(verts[0].x, verts[0].y);
+    for (let i = 1; i < verts.length; i++) g.lineTo(verts[i].x, verts[i].y);
+    g.closePath(); g.strokePath();
+  }
+
+  private drawEllipseObstacle(g: Phaser.GameObjects.Graphics, e: EllipseDef) {
     const N = 32;
     const local = this.worldToLocal(e.x, e.y);
     const cos = Math.cos(e.angle), sin = Math.sin(e.angle);
@@ -1235,18 +1314,8 @@ export class GameScene extends Phaser.Scene {
       const lx = e.rx * Math.cos(a), ly = e.ry * Math.sin(a);
       pts.push({ x: local.x + lx * cos - ly * sin, y: local.y + lx * sin + ly * cos });
     }
-    g.fillStyle(C_DARK, 1);
-    g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < N; i++) g.lineTo(pts[i].x, pts[i].y);
-    g.closePath(); g.fillPath();
-    g.lineStyle(6, 0x334455, 0.4);
-    g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < N; i++) g.lineTo(pts[i].x, pts[i].y);
-    g.closePath(); g.strokePath();
-    g.lineStyle(2, 0x446688, 0.9);
-    g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < N; i++) g.lineTo(pts[i].x, pts[i].y);
-    g.closePath(); g.strokePath();
+    const isSink = e.mode === 'sink';
+    this.drawPolyObstacle(g, pts, isSink);
   }
 
   /** Flood-fill a half of the polygon with a faint tint */
@@ -1404,28 +1473,28 @@ export class GameScene extends Phaser.Scene {
       const pal = PAL[glowState];
       const r = this.cfg.coinRadius;
 
+      // Fade out sinking coins
+      const sinkData = this.sinkingCoins.get(i);
+      const a = sinkData ? Math.max(0, 1 - sinkData.frame / GameScene.SINK_FADE_FRAMES) : 1;
+      if (a <= 0) continue;
+
       if (this.look.coinRendering === 'glow') {
-        // Outer glow rings
-        g.lineStyle(14, pal.glow, 0.08);
+        g.lineStyle(14, pal.glow, 0.08 * a);
         g.strokeCircle(lx, ly, r + 8);
-        g.lineStyle(7, pal.glow, 0.22);
+        g.lineStyle(7, pal.glow, 0.22 * a);
         g.strokeCircle(lx, ly, r + 4);
       } else {
-        // Drop shadow
-        g.fillStyle(0x000000, 0.45);
+        g.fillStyle(0x000000, 0.45 * a);
         g.fillCircle(lx + 4, ly + 5, r);
       }
 
-      // Body
-      g.fillStyle(pal.body, 1);
+      g.fillStyle(pal.body, a);
       g.fillCircle(lx, ly, r);
-      // Specular highlight
-      g.fillStyle(0xffffff, 0.55);
+      g.fillStyle(0xffffff, 0.55 * a);
       g.fillCircle(lx - 4, ly - 4, r * 0.45);
 
-      // Rim — subtle for drop-shadow, bright for glow
       const rimAlpha = this.look.coinRendering === 'glow' ? 0.9 : 0.4;
-      g.lineStyle(2, pal.rim, rimAlpha);
+      g.lineStyle(2, pal.rim, rimAlpha * a);
       g.strokeCircle(lx, ly, r);
     }
   }

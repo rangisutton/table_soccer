@@ -65,8 +65,8 @@
   <div class="section">
     <h3>Mode</h3>
     <button class="mode-btn active" id="btn-boundary">[ Boundary ]</button>
-    <button class="mode-btn" id="btn-blocker">[ Blocker ]</button>
-    <button class="btn btn-warn" id="btnDeleteBlocker" disabled style="opacity:0.3;font-size:11px;padding:4px 8px;">Delete selected blocker</button>
+    <button class="mode-btn" id="btn-poly">[ Poly ]</button>
+    <button class="btn btn-warn" id="btnDeletePoly" disabled style="opacity:0.3;font-size:11px;padding:4px 8px;">Delete selected poly</button>
     <button class="mode-btn" id="btn-ellipse">[ Ellipse ]</button>
     <button class="btn btn-warn" id="btnDeleteEllipse" disabled style="opacity:0.3;font-size:11px;padding:4px 8px;">Delete ellipse</button>
     <button class="mode-btn" id="btn-start">[ Start Coins ]</button>
@@ -91,6 +91,17 @@
     </div>
   </div>
 
+  <div class="section" id="polySection" style="display:none;">
+    <h3>Poly</h3>
+    <div class="row">
+      <label>Mode</label>
+      <select id="polyMode" style="flex:1;background:#0a1a2a;border:1px solid #224466;color:#ffffff;font-family:monospace;font-size:12px;padding:3px 5px;">
+        <option value="block">Block</option>
+        <option value="sink">Sink</option>
+      </select>
+    </div>
+  </div>
+
   <div class="section" id="ellipseSection" style="display:none;">
     <h3>Ellipse</h3>
     <div class="row">
@@ -107,6 +118,13 @@
       <label>Rotation</label>
       <input type="range" id="ellipseAngle" min="0" max="179" value="0" />
       <span class="val" id="ellipseAngleVal">0°</span>
+    </div>
+    <div class="row">
+      <label>Mode</label>
+      <select id="ellipseMode" style="flex:1;background:#0a1a2a;border:1px solid #224466;color:#ffffff;font-family:monospace;font-size:12px;padding:3px 5px;">
+        <option value="block">Block</option>
+        <option value="sink">Sink</option>
+      </select>
     </div>
   </div>
 
@@ -164,9 +182,9 @@
   </div>
 
   <div class="section hint">
-    <strong style="color:#556677">Ellipse:</strong> Click to place. Click an ellipse to select/drag it. Delete removes it.<br><br>
-    <strong style="color:#556677">Boundary:</strong> Click edge to split it. Click empty space to append. RMB on a vertex to delete it.<br><br>
-    <strong style="color:#556677">Blocker:</strong> Click to build polygon, RMB to close. Click a vertex to select that blocker. Click its edge to split. RMB a vertex to delete it.<br><br>
+    <strong style="color:#556677">Boundary:</strong> Click edge to split. Click empty space to append. RMB on a vertex to delete. <strong>Shift+click edge</strong> to toggle sink/block.<br><br>
+    <strong style="color:#556677">Poly:</strong> Click to build polygon, RMB to close. Click a vertex to select. Click its edge to split. RMB a vertex to delete. Use Mode dropdown for block/sink.<br><br>
+    <strong style="color:#556677">Ellipse:</strong> Click to place. Click to select/drag. Use Mode dropdown for block/sink.<br><br>
     <strong style="color:#556677">Start:</strong> Drag the 3 kickoff coin positions.<br><br>
     Goal handle (gold circle) is draggable on the seam edge.<br><br>
     <strong style="color:#556677">Save</strong> writes directly to src/levels/ and the game picks it up instantly.

@@ -2,6 +2,10 @@ import { Vec2, GoalPost } from './types';
 
 export type LevelType = 'field' | 'course';
 
+// ─── Obstacle mode ────────────────────────────────────────────────────────────
+
+export type ObstacleMode = 'block' | 'sink';
+
 // ─── Coin configuration ───────────────────────────────────────────────────────
 
 export interface CoinConfig {
@@ -37,23 +41,41 @@ export const LOOKS: Record<LookName, LookDef> = {
   },
 };
 
+// ─── Obstacle shapes ──────────────────────────────────────────────────────────
+
 export interface EllipseDef {
   x: number;
   y: number;
   rx: number;    // semi-major axis
   ry: number;    // semi-minor axis
   angle: number; // rotation in radians
+  mode?: ObstacleMode; // default 'block'
 }
+
+/** A polygon obstacle (was: blockers entry) */
+export interface PolyDef {
+  verts: Vec2[];
+  mode?: ObstacleMode; // default 'block'
+}
+
+/** A boundary vertex. edgeMode applies to the edge FROM this vertex TO the next. */
+export interface BoundaryPoint {
+  x: number;
+  y: number;
+  edgeMode?: ObstacleMode; // default 'block'
+}
+
+// ─── Level definition ─────────────────────────────────────────────────────────
 
 export interface LevelDef {
   id: string;
   label: string;
   type: LevelType;
   /** Closed boundary polygon — vertices in order */
-  boundary: Vec2[];
-  /** Interior solid obstacles — each is a closed polygon */
-  blockers: Vec2[][];
-  /** Interior solid obstacles — ellipses */
+  boundary: BoundaryPoint[];
+  /** Interior polygon obstacles */
+  polys: PolyDef[];
+  /** Interior ellipse obstacles */
   ellipses?: EllipseDef[];
   /** Goal openings — for 'field' levels there are two; for 'course' levels, one */
   goals: GoalPost[];

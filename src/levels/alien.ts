@@ -29,7 +29,7 @@ export const alienLevel: LevelDef = {
     { x: 600, y: 20 },
     { x: 480, y: 20 },
   ],
-  blockers: [],
+  polys: [],
   ellipses: [
     { x: 260, y: 180, rx: 36, ry: 23, angle: 2.3213 },
     { x: 540, y: 180, rx: 36, ry: 23, angle: 0.9250 },

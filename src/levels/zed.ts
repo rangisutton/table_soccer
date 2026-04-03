@@ -31,19 +31,19 @@ export const zedLevel: LevelDef = {
     { x: 760, y: 220 },
     { x: 760, y: 200 },
   ],
-  blockers: [
-    [
+  polys: [
+    { verts: [
       { x: 240, y: 220 },
       { x: 200, y: 240 },
       { x: 260, y: 360 },
       { x: 280, y: 160 },
-    ],
-    [
+    ] },
+    { verts: [
       { x: 100, y: 100 },
       { x: 140, y: 100 },
       { x: 200, y: 80 },
       { x: 80, y: 60 },
-    ],
+    ] },
   ],
   ellipses: [],
   goals: [

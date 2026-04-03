@@ -48,7 +48,7 @@ export const swissLevel: LevelDef = {
     { x: 634, y: 39 },
     { x: 520, y: 40 },
   ],
-  blockers: [],
+  polys: [],
   ellipses: [
     { x: 603, y: 533, rx: 60, ry: 34, angle: 0.9948 },
     { x: 480, y: 320, rx: 60, ry: 60, angle: 0.0000 },

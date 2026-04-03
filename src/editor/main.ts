@@ -7,7 +7,9 @@ const EDGE_HIT = 10; // px — distance to register a click as "on an edge"
 let exportMode = false;
 
 interface Vec2 { x: number; y: number; }
-interface EllipseDef { x: number; y: number; rx: number; ry: number; angle: number; }
+type ObstacleMode = 'block' | 'sink';
+interface EllipseDef { x: number; y: number; rx: number; ry: number; angle: number; mode?: ObstacleMode; }
+interface PolyState { verts: Vec2[]; mode: ObstacleMode; }
 
 function mirror(v: Vec2): Vec2 {
   return { x: 2 * CX - v.x, y: 2 * CY - v.y };
@@ -41,20 +43,21 @@ function distToSegment(p: Vec2, a: Vec2, b: Vec2): { dist: number; t: number } {
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-type Mode = 'boundary' | 'blocker' | 'start' | 'ellipse';
+type Mode = 'boundary' | 'poly' | 'start' | 'ellipse';
 
 interface DragTarget {
-  type: 'half-vert' | 'start-coin' | 'blocker-vert' | 'goal' | 'ellipse';
+  type: 'half-vert' | 'start-coin' | 'poly-vert' | 'goal' | 'ellipse';
   polyIdx: number;
   vertIdx: number;
 }
 
 const state = {
   halfVerts: [] as Vec2[],
+  halfEdgeModes: [] as ObstacleMode[], // mode of edge from halfVerts[i] to halfVerts[i+1]
   goal: { t: 0.5, gap: 80, spoke: 50 },
-  blockers: [] as Vec2[][],
-  activeBlocker: null as Vec2[] | null,
-  selectedBlockerIdx: null as number | null,
+  polys: [] as PolyState[],
+  activePoly: null as Vec2[] | null,
+  selectedPolyIdx: null as number | null,
   start: null as [Vec2, Vec2, Vec2] | null,
   mode: 'boundary' as Mode,
   ellipses: [] as EllipseDef[],
@@ -114,12 +117,12 @@ function computeGoal(seam: [Vec2, Vec2], scorer: 0 | 1): GoalPost {
   return { leftBase, rightBase, leftTip, rightTip, scorer };
 }
 
-/** All blockers including 180° mirrors of user-drawn ones */
-function allBlockers(): { verts: Vec2[]; isMirror: boolean }[] {
-  const result: { verts: Vec2[]; isMirror: boolean }[] = [];
-  for (const b of state.blockers) {
-    result.push({ verts: b, isMirror: false });
-    result.push({ verts: b.map(mirror), isMirror: true });
+/** All polys including 180° mirrors of user-drawn ones */
+function allPolys(): { verts: Vec2[]; isMirror: boolean; mode: ObstacleMode }[] {
+  const result: { verts: Vec2[]; isMirror: boolean; mode: ObstacleMode }[] = [];
+  for (const p of state.polys) {
+    result.push({ verts: p.verts, isMirror: false, mode: p.mode });
+    result.push({ verts: p.verts.map(mirror), isMirror: true, mode: p.mode });
   }
   return result;
 }
@@ -217,9 +220,9 @@ function findHalfEdgeHit(p: Vec2): { insertAt: number; point: Vec2 } | null {
   return { insertAt: best.insertAt, point };
 }
 
-/** Find closest edge on a blocker polygon within EDGE_HIT. */
-function findBlockerEdgeHit(p: Vec2, polyIdx: number): { insertAt: number; point: Vec2 } | null {
-  const b = state.blockers[polyIdx];
+/** Find closest edge on a poly polygon within EDGE_HIT. */
+function findPolyEdgeHit(p: Vec2, polyIdx: number): { insertAt: number; point: Vec2 } | null {
+  const b = state.polys[polyIdx]?.verts;
   if (!b || b.length < 2) return null;
   let best = { dist: EDGE_HIT + 1, insertAt: -1, t: 0 };
   for (let i = 0; i < b.length; i++) {
@@ -260,7 +263,7 @@ function draw() {
     drawUserHalf();
   }
   drawEllipses(showBg);
-  drawBlockers(showBg);
+  drawPolys(showBg);
   drawGoals();
   if (!exportMode && boundary.length >= 4) drawStartCoins();
   if (!exportMode) {
@@ -318,7 +321,6 @@ function drawHalfFill(boundary: Vec2[], topHalf: boolean, color: string) {
 function drawBoundaryBorder(boundary: Vec2[]) {
   const n = boundary.length;
   if (exportMode) {
-    // Closed polygon, single colour
     ctx.strokeStyle = '#00ffee'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(boundary[0].x, boundary[0].y);
     for (let i = 1; i < n; i++) ctx.lineTo(boundary[i].x, boundary[i].y);
@@ -326,16 +328,23 @@ function drawBoundaryBorder(boundary: Vec2[]) {
     return;
   }
   const seams = orderedSeams();
+  const hn = state.halfVerts.length;
   for (let i = 0; i < n; i++) {
     const a = boundary[i], b = boundary[(i + 1) % n];
     const isSeam = seams && seams.some(([sa, sb]) => dist2(a, sa) < 2 && dist2(b, sb) < 2);
     if (isSeam) continue;
+    // Determine edge mode: first half uses halfEdgeModes, mirror half mirrors those
+    const edgeIdx = i < hn ? i : i - hn;
+    const edgeMode = state.halfEdgeModes[edgeIdx] ?? 'block';
+    const isSink = edgeMode === 'sink';
     const midY = (a.y + b.y) / 2;
-    const col = midY < CY ? '#00ffee' : '#ff00cc';
-    ctx.strokeStyle = col + '26'; ctx.lineWidth = 6;
+    const baseCol = isSink ? '#ff6600' : (midY < CY ? '#00ffee' : '#ff00cc');
+    ctx.strokeStyle = baseCol + '26'; ctx.lineWidth = 6;
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    ctx.strokeStyle = col; ctx.lineWidth = 2;
+    ctx.strokeStyle = baseCol; ctx.lineWidth = 2;
+    if (isSink) { ctx.setLineDash([6, 4]); }
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.setLineDash([]);
   }
 }
 
@@ -456,55 +465,56 @@ function drawEllipses(showBg = false) {
   }
 }
 
-function drawBlockers(showBg = false) {
+function drawPolys(showBg = false) {
   // Draw mirrors first (behind)
-  for (const { verts, isMirror } of allBlockers()) {
+  for (const { verts, isMirror, mode } of allPolys()) {
     if (!isMirror) continue;
     if (verts.length === 0) continue;
+    const isSink = mode === 'sink';
     if (exportMode) {
-      ctx.fillStyle = '#888888';
-      ctx.strokeStyle = '#446688';
+      ctx.fillStyle = isSink ? '#331100' : '#888888';
+      ctx.strokeStyle = isSink ? '#ff6600' : '#446688';
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(verts[0].x, verts[0].y);
       for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
       ctx.closePath(); ctx.fill(); ctx.stroke();
     } else {
-      ctx.strokeStyle = 'rgba(255,0,204,0.35)';
+      ctx.strokeStyle = isSink ? 'rgba(255,102,0,0.4)' : 'rgba(255,0,204,0.35)';
       ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
       ctx.beginPath(); ctx.moveTo(verts[0].x, verts[0].y);
       for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
       ctx.closePath();
-      if (!showBg) { ctx.fillStyle = 'rgba(255,0,204,0.06)'; ctx.fill(); }
+      if (!showBg) { ctx.fillStyle = isSink ? 'rgba(255,102,0,0.06)' : 'rgba(255,0,204,0.06)'; ctx.fill(); }
       ctx.stroke();
       ctx.setLineDash([]);
     }
   }
-  // Draw user blockers
-  for (let bi = 0; bi < state.blockers.length; bi++) {
-    const b = state.blockers[bi];
-    const isSelected = state.selectedBlockerIdx === bi;
-    if (b.length === 0) continue;
-    ctx.strokeStyle = isSelected ? '#00ccff' : '#446688';
+  // Draw user polys
+  for (let bi = 0; bi < state.polys.length; bi++) {
+    const { verts, mode } = state.polys[bi];
+    const isSelected = state.selectedPolyIdx === bi;
+    const isSink = mode === 'sink';
+    if (verts.length === 0) continue;
+    ctx.strokeStyle = isSelected ? '#00ccff' : (isSink ? '#ff6600' : '#446688');
     ctx.lineWidth = isSelected ? 2 : 1.5;
-    ctx.beginPath(); ctx.moveTo(b[0].x, b[0].y);
-    for (let i = 1; i < b.length; i++) ctx.lineTo(b[i].x, b[i].y);
+    ctx.beginPath(); ctx.moveTo(verts[0].x, verts[0].y);
+    for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
     ctx.closePath();
     if (exportMode) {
-      ctx.fillStyle = '#888888'; ctx.fill();
+      ctx.fillStyle = isSink ? '#331100' : '#888888'; ctx.fill();
     } else if (!showBg) {
-      ctx.fillStyle = isSelected ? 'rgba(0,200,255,0.08)' : 'rgba(3,3,32,0.85)';
+      ctx.fillStyle = isSelected ? 'rgba(0,200,255,0.08)' : (isSink ? 'rgba(255,102,0,0.12)' : 'rgba(3,3,32,0.85)');
       ctx.fill();
     }
     ctx.stroke();
   }
-  // Active (in-progress) blocker
-  if (state.activeBlocker && state.activeBlocker.length > 0) {
-    const b = state.activeBlocker;
+  // Active (in-progress) poly being drawn
+  if (state.activePoly && state.activePoly.length > 0) {
+    const b = state.activePoly;
     ctx.fillStyle = 'rgba(255,170,0,0.08)'; ctx.strokeStyle = '#ffaa00'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(b[0].x, b[0].y);
     for (let i = 1; i < b.length; i++) ctx.lineTo(b[i].x, b[i].y);
     ctx.stroke();
-    // Show its mirror too
     const mb = b.map(mirror);
     ctx.strokeStyle = 'rgba(255,0,204,0.3)'; ctx.setLineDash([4, 3]);
     ctx.beginPath(); ctx.moveTo(mb[0].x, mb[0].y);
@@ -534,17 +544,18 @@ function drawHandles() {
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(v.x, v.y, HANDLE_R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   }
-  for (let bi = 0; bi < state.blockers.length; bi++) {
-    const isSelected = state.selectedBlockerIdx === bi;
-    for (const v of state.blockers[bi]) {
-      ctx.strokeStyle = isSelected ? '#00ccff' : '#446688';
+  for (let bi = 0; bi < state.polys.length; bi++) {
+    const isSelected = state.selectedPolyIdx === bi;
+    const isSink = state.polys[bi].mode === 'sink';
+    for (const v of state.polys[bi].verts) {
+      ctx.strokeStyle = isSelected ? '#00ccff' : (isSink ? '#ff6600' : '#446688');
       ctx.fillStyle   = isSelected ? '#00ccff22' : '#44668822';
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(v.x, v.y, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     }
   }
-  if (state.activeBlocker) {
-    for (const v of state.activeBlocker) {
+  if (state.activePoly) {
+    for (const v of state.activePoly) {
       ctx.strokeStyle = '#ffaa00'; ctx.fillStyle = '#ffaa0022'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(v.x, v.y, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     }
@@ -575,9 +586,9 @@ function hitTest(p: Vec2): DragTarget | null {
       if (dist2(p, coins[i]) < 16) return { type: 'start-coin', polyIdx: 0, vertIdx: i };
     }
   }
-  for (let bi = 0; bi < state.blockers.length; bi++) {
-    for (let vi = 0; vi < state.blockers[bi].length; vi++) {
-      if (dist2(p, state.blockers[bi][vi]) < HANDLE_R) return { type: 'blocker-vert', polyIdx: bi, vertIdx: vi };
+  for (let bi = 0; bi < state.polys.length; bi++) {
+    for (let vi = 0; vi < state.polys[bi].verts.length; vi++) {
+      if (dist2(p, state.polys[bi].verts[vi]) < HANDLE_R) return { type: 'poly-vert', polyIdx: bi, vertIdx: vi };
     }
   }
   for (let ei = 0; ei < state.ellipses.length; ei++) {
@@ -595,10 +606,11 @@ canvas.addEventListener('mousedown', (e) => {
   const hit = hitTest(p);
 
   if (hit) {
-    // Clicking a blocker vert selects that blocker
-    if (hit.type === 'blocker-vert') {
-      state.selectedBlockerIdx = hit.polyIdx;
-      updateDeleteBlockerBtn();
+    // Clicking a poly vert selects that poly
+    if (hit.type === 'poly-vert') {
+      state.selectedPolyIdx = hit.polyIdx;
+      updateDeletePolyBtn();
+      syncPolyModeUI(hit.polyIdx);
     }
     if (hit.type === 'ellipse') {
       state.selectedEllipseIdx = hit.polyIdx;
@@ -613,26 +625,35 @@ canvas.addEventListener('mousedown', (e) => {
   const snapped = snap(p);
 
   if (state.mode === 'boundary') {
-    // Check for edge split first
     const edgeHit = findHalfEdgeHit(p);
     if (edgeHit) {
-      state.halfVerts.splice(edgeHit.insertAt, 0, edgeHit.point);
+      // Shift+click on edge: toggle sink mode for that edge (don't split)
+      if (e.shiftKey) {
+        const edgeIdx = edgeHit.insertAt - 1;
+        const cur = state.halfEdgeModes[edgeIdx] ?? 'block';
+        state.halfEdgeModes[edgeIdx] = cur === 'sink' ? 'block' : 'sink';
+      } else {
+        state.halfVerts.splice(edgeHit.insertAt, 0, edgeHit.point);
+        // Insert a default mode entry for the new edge
+        state.halfEdgeModes.splice(edgeHit.insertAt, 0, 'block');
+      }
     } else {
       state.halfVerts.push(snapped);
+      state.halfEdgeModes.push('block');
     }
     save();
-  } else if (state.mode === 'blocker') {
-    // Check for edge split on selected blocker
-    if (state.selectedBlockerIdx !== null) {
-      const edgeHit = findBlockerEdgeHit(p, state.selectedBlockerIdx);
+  } else if (state.mode === 'poly') {
+    // Check for edge split on selected poly
+    if (state.selectedPolyIdx !== null) {
+      const edgeHit = findPolyEdgeHit(p, state.selectedPolyIdx);
       if (edgeHit) {
-        state.blockers[state.selectedBlockerIdx].splice(edgeHit.insertAt, 0, edgeHit.point);
+        state.polys[state.selectedPolyIdx].verts.splice(edgeHit.insertAt, 0, edgeHit.point);
         save(); draw(); return;
       }
     }
-    // Otherwise add to active blocker
-    if (!state.activeBlocker) state.activeBlocker = [];
-    state.activeBlocker.push(snapped);
+    // Otherwise add to active poly
+    if (!state.activePoly) state.activePoly = [];
+    state.activePoly.push(snapped);
   } else if (state.mode === 'ellipse') {
     const ry = state.ellipseRx * (1 - state.ellipseEcc / 100);
     const newEll: EllipseDef = { x: p.x, y: p.y, rx: state.ellipseRx, ry, angle: state.ellipseAngle * Math.PI / 180 };
@@ -656,8 +677,8 @@ canvas.addEventListener('mousemove', (e) => {
     const coins = getStart();
     coins[vertIdx] = snapped;
     state.start = coins; save();
-  } else if (type === 'blocker-vert') {
-    state.blockers[polyIdx][vertIdx] = snapped; save();
+  } else if (type === 'poly-vert') {
+    state.polys[polyIdx].verts[vertIdx] = snapped; save();
   } else if (type === 'ellipse') {
     state.ellipses[polyIdx].x = snapped.x;
     state.ellipses[polyIdx].y = snapped.y;
@@ -681,32 +702,36 @@ canvas.addEventListener('contextmenu', (e) => {
     for (let i = 0; i < state.halfVerts.length; i++) {
       if (dist2(p, state.halfVerts[i]) < HANDLE_R + 4) {
         state.halfVerts.splice(i, 1);
+        state.halfEdgeModes.splice(i, 1);
         deleted = true; break;
       }
     }
-    if (!deleted && state.halfVerts.length > 0) state.halfVerts.pop();
+    if (!deleted && state.halfVerts.length > 0) {
+      state.halfVerts.pop();
+      state.halfEdgeModes.pop();
+    }
     save();
-  } else if (state.mode === 'blocker') {
-    if (state.activeBlocker) {
-      // RMB closes the active blocker if >= 3 verts, else cancels
-      if (state.activeBlocker.length >= 3) {
-        state.blockers.push(state.activeBlocker);
-        state.selectedBlockerIdx = state.blockers.length - 1;
-        updateDeleteBlockerBtn();
+  } else if (state.mode === 'poly') {
+    if (state.activePoly) {
+      // RMB closes the active poly if >= 3 verts, else cancels
+      if (state.activePoly.length >= 3) {
+        state.polys.push({ verts: state.activePoly, mode: 'block' });
+        state.selectedPolyIdx = state.polys.length - 1;
+        updateDeletePolyBtn();
+        syncPolyModeUI(state.selectedPolyIdx);
         save();
       }
-      state.activeBlocker = null;
-    } else if (state.selectedBlockerIdx !== null) {
-      // RMB on a specific vert of selected blocker → delete it
-      const b = state.blockers[state.selectedBlockerIdx];
+      state.activePoly = null;
+    } else if (state.selectedPolyIdx !== null) {
+      // RMB on a specific vert of selected poly → delete it
+      const b = state.polys[state.selectedPolyIdx].verts;
       for (let i = 0; i < b.length; i++) {
         if (dist2(p, b[i]) < HANDLE_R + 4) {
           b.splice(i, 1);
           if (b.length < 3) {
-            // Degenerate — remove the blocker
-            state.blockers.splice(state.selectedBlockerIdx, 1);
-            state.selectedBlockerIdx = null;
-            updateDeleteBlockerBtn();
+            state.polys.splice(state.selectedPolyIdx, 1);
+            state.selectedPolyIdx = null;
+            updateDeletePolyBtn();
           }
           save(); draw(); return;
         }
@@ -726,26 +751,43 @@ canvas.addEventListener('contextmenu', (e) => {
 // ─── Controls ─────────────────────────────────────────────────────────────────
 
 function setMode(m: Mode) {
-  if (state.mode === 'blocker' && state.activeBlocker) {
-    if (state.activeBlocker.length >= 3) {
-      state.blockers.push(state.activeBlocker);
-      state.selectedBlockerIdx = state.blockers.length - 1;
-      updateDeleteBlockerBtn();
+  if (state.mode === 'poly' && state.activePoly) {
+    if (state.activePoly.length >= 3) {
+      state.polys.push({ verts: state.activePoly, mode: 'block' });
+      state.selectedPolyIdx = state.polys.length - 1;
+      updateDeletePolyBtn();
+      syncPolyModeUI(state.selectedPolyIdx);
     }
-    state.activeBlocker = null;
+    state.activePoly = null;
   }
   state.mode = m;
   document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(`btn-${m}`)!.classList.add('active');
   const ellSec = document.getElementById('ellipseSection');
   if (ellSec) ellSec.style.display = m === 'ellipse' ? '' : 'none';
+  const polySec = document.getElementById('polySection');
+  if (polySec) polySec.style.display = m === 'poly' ? '' : 'none';
   draw();
 }
 
-function updateDeleteBlockerBtn() {
-  const btn = document.getElementById('btnDeleteBlocker') as HTMLButtonElement;
-  btn.disabled = state.selectedBlockerIdx === null;
-  btn.style.opacity = state.selectedBlockerIdx === null ? '0.3' : '1';
+function updateDeletePolyBtn() {
+  const btn = document.getElementById('btnDeletePoly') as HTMLButtonElement;
+  btn.disabled = state.selectedPolyIdx === null;
+  btn.style.opacity = state.selectedPolyIdx === null ? '0.3' : '1';
+}
+
+function syncPolyModeUI(idx: number) {
+  const p = state.polys[idx];
+  if (!p) return;
+  const sel = document.getElementById('polyMode') as HTMLSelectElement | null;
+  if (sel) sel.value = p.mode;
+}
+
+function syncEllipseModeUI(idx: number) {
+  const e = state.ellipses[idx];
+  if (!e) return;
+  const sel = document.getElementById('ellipseMode') as HTMLSelectElement | null;
+  if (sel) sel.value = e.mode ?? 'block';
 }
 
 function updateEllipseDeleteBtn() {
@@ -777,17 +819,24 @@ function syncEllipseUI(idx: number) {
   state.ellipseRx = Math.round(e.rx);
   state.ellipseEcc = eccPct;
   state.ellipseAngle = angleDeg;
+  syncEllipseModeUI(idx);
 }
 
 document.getElementById('btn-boundary')!.addEventListener('click', () => setMode('boundary'));
-document.getElementById('btn-blocker')!.addEventListener('click',  () => setMode('blocker'));
+document.getElementById('btn-poly')!.addEventListener('click',     () => setMode('poly'));
 document.getElementById('btn-start')!.addEventListener('click',    () => setMode('start'));
 
-document.getElementById('btnDeleteBlocker')!.addEventListener('click', () => {
-  if (state.selectedBlockerIdx === null) return;
-  state.blockers.splice(state.selectedBlockerIdx, 1);
-  state.selectedBlockerIdx = null;
-  updateDeleteBlockerBtn();
+document.getElementById('btnDeletePoly')!.addEventListener('click', () => {
+  if (state.selectedPolyIdx === null) return;
+  state.polys.splice(state.selectedPolyIdx, 1);
+  state.selectedPolyIdx = null;
+  updateDeletePolyBtn();
+  save(); draw();
+});
+
+(document.getElementById('polyMode') as HTMLSelectElement).addEventListener('change', (ev) => {
+  if (state.selectedPolyIdx === null) return;
+  state.polys[state.selectedPolyIdx].mode = (ev.target as HTMLSelectElement).value as ObstacleMode;
   save(); draw();
 });
 
@@ -856,6 +905,12 @@ function updateEllipseFromUI() {
   updateEllipseFromUI();
 });
 
+(document.getElementById('ellipseMode') as HTMLSelectElement).addEventListener('change', (ev) => {
+  if (state.selectedEllipseIdx === null) return;
+  state.ellipses[state.selectedEllipseIdx].mode = (ev.target as HTMLSelectElement).value as ObstacleMode;
+  save(); draw();
+});
+
 (document.getElementById('snapGrid') as HTMLInputElement)
   .addEventListener('change', (e) => { state.snapGrid = (e.target as HTMLInputElement).checked; });
 
@@ -864,11 +919,11 @@ function updateEllipseFromUI() {
 
 document.getElementById('btnClear')!.addEventListener('click', () => {
   if (!confirm('Clear everything?')) return;
-  state.halfVerts = []; state.blockers = []; state.activeBlocker = null;
-  state.start = null; state.selectedBlockerIdx = null;
+  state.halfVerts = []; state.halfEdgeModes = []; state.polys = []; state.activePoly = null;
+  state.start = null; state.selectedPolyIdx = null;
   state.ellipses = []; state.selectedEllipseIdx = null;
   updateEllipseDeleteBtn();
-  updateDeleteBlockerBtn();
+  updateDeletePolyBtn();
   localStorage.removeItem('editorState');
   draw();
 });
@@ -957,14 +1012,24 @@ function exportTS(): string {
   const id    = toSlug(name);
   const ident = toCamel(name);
 
-  const bLines  = boundary.map(v => `    ${v2s(v)},`).join('\n');
-  // Only export user-drawn blockers — mirrors are added at runtime by GameScene
-  const blLines = state.blockers.map(b =>
-    `    [\n${b.map(v => `      ${v2s(v)},`).join('\n')}\n    ],`
-  ).join('\n');
-  const elLines = state.ellipses.map(e =>
-    `    { x: ${Math.round(e.x)}, y: ${Math.round(e.y)}, rx: ${Math.round(e.rx)}, ry: ${Math.round(e.ry)}, angle: ${e.angle.toFixed(4)} },`
-  ).join('\n');
+  // Boundary: emit edgeMode where non-default ('block'), using halfVerts indices
+  // Full boundary = halfVerts + mirrors; edge i uses halfEdgeModes[i % halfVerts.length]
+  const hn = state.halfVerts.length;
+  const bLines = boundary.map((v, i) => {
+    const eMode = state.halfEdgeModes[i < hn ? i : i - hn] ?? 'block';
+    const modeStr = eMode === 'sink' ? `, edgeMode: 'sink'` : '';
+    return `    { x: ${Math.round(v.x)}, y: ${Math.round(v.y)}${modeStr} },`;
+  }).join('\n');
+  // Only export user-drawn polys — mirrors are added at runtime by GameScene
+  const blLines = state.polys.map(p => {
+    const vertsStr = p.verts.map(v => `      ${v2s(v)},`).join('\n');
+    const modeStr = p.mode === 'sink' ? `, mode: 'sink'` : '';
+    return `    { verts: [\n${vertsStr}\n    ]${modeStr} },`;
+  }).join('\n');
+  const elLines = state.ellipses.map(e => {
+    const modeStr = e.mode === 'sink' ? `, mode: 'sink'` : '';
+    return `    { x: ${Math.round(e.x)}, y: ${Math.round(e.y)}, rx: ${Math.round(e.rx)}, ry: ${Math.round(e.ry)}, angle: ${e.angle.toFixed(4)}${modeStr} },`;
+  }).join('\n');
 
   return `import { LevelDef } from '../LevelDef';
 
@@ -977,7 +1042,7 @@ export const ${ident}: LevelDef = {
   boundary: [
 ${bLines}
   ],
-  blockers: [${blLines ? '\n' + blLines + '\n  ' : ''}],
+  polys: [${blLines ? '\n' + blLines + '\n  ' : ''}],
   ellipses: [${elLines ? '\n' + elLines + '\n  ' : ''}],
   goals: [
     {
@@ -1045,8 +1110,9 @@ async function exportImage() {
 function editorStateForSave() {
   return {
     halfVerts: state.halfVerts,
+    halfEdgeModes: state.halfEdgeModes,
     goal: state.goal,
-    blockers: state.blockers,
+    polys: state.polys,
     ellipses: state.ellipses,
     start: state.start,
     levelName: state.levelName,
@@ -1059,12 +1125,18 @@ function editorStateForSave() {
 }
 
 function applyState(s: ReturnType<typeof editorStateForSave>) {
-  state.halfVerts  = s.halfVerts  ?? [];
-  state.goal       = s.goal       ?? state.goal;
-  state.blockers   = s.blockers   ?? [];
+  state.halfVerts      = s.halfVerts  ?? [];
+  state.halfEdgeModes  = (s as any).halfEdgeModes ?? [];
+  state.goal           = s.goal       ?? state.goal;
+  // Backwards compat: old saves had blockers: Vec2[][] — convert on load
+  if ((s as any).blockers && !s.polys) {
+    state.polys = ((s as any).blockers as Vec2[][]).map(b => ({ verts: b, mode: 'block' as ObstacleMode }));
+  } else {
+    state.polys = (s as any).polys ?? [];
+  }
   state.start      = s.start      ?? null;
   state.levelName  = s.levelName  ?? 'My Field';
-  state.selectedBlockerIdx = null;
+  state.selectedPolyIdx = null;
   state.ellipses     = (s as any).ellipses     ?? [];
   state.imageUrl     = (s as any).imageUrl     ?? null;
   state.look         = (s as any).look         ?? 'neon';
@@ -1072,11 +1144,11 @@ function applyState(s: ReturnType<typeof editorStateForSave>) {
   state.coinKickPower = (s as any).coinKickPower ?? 1.0;
   state.coinDrag     = (s as any).coinDrag     ?? 5.0;
   state.selectedEllipseIdx = null;
-  state.activeBlocker = null;
+  state.activePoly = null;
   (document.getElementById('levelName') as HTMLInputElement).value = state.levelName;
   (document.getElementById('levelLook') as HTMLSelectElement).value = state.look;
   updateGoalUI();
-  updateDeleteBlockerBtn();
+  updateDeletePolyBtn();
   updateEllipseDeleteBtn();
   updateCoinConfigUI();
   // Auto-load bg image if we have a URL
@@ -1123,7 +1195,7 @@ document.getElementById('btnLoad')!.addEventListener('click', async () => {
 loadSaved();
 (document.getElementById('levelLook') as HTMLSelectElement).value = state.look;
 updateGoalUI();
-updateDeleteBlockerBtn();
+updateDeletePolyBtn();
 updateEllipseDeleteBtn();
 updateCoinConfigUI();
 updateBgStatus();

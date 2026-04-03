@@ -35,13 +35,13 @@ export const cricketLevel: LevelDef = {
     { x: 496, y: 62 },
     { x: 440, y: 60 },
   ],
-  blockers: [
-    [
+  polys: [
+    { verts: [
       { x: 380, y: 400 },
       { x: 380, y: 300 },
       { x: 420, y: 300 },
       { x: 420, y: 400 },
-    ],
+    ] },
   ],
   ellipses: [
     { x: 400, y: 240, rx: 9, ry: 9, angle: 0.0000 },

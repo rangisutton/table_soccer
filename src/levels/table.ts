@@ -17,19 +17,19 @@ export const tableLevel: LevelDef = {
     { x: 720, y: 80 },
     { x: 480, y: 80 },
   ],
-  blockers: [
-    [
+  polys: [
+    { verts: [
       { x: 572, y: 537 },
       { x: 630, y: 557 },
       { x: 660, y: 460 },
       { x: 602, y: 443 },
-    ],
-    [
+    ] },
+    { verts: [
       { x: 167, y: 640 },
       { x: 193, y: 635 },
       { x: 182, y: 576 },
       { x: 155, y: 581 },
-    ],
+    ] },
   ],
   ellipses: [
     { x: 660, y: 640, rx: 25, ry: 25, angle: 0.0000 },
