@@ -92,6 +92,7 @@ export class GameScene extends Phaser.Scene {
   private netMode = false;
   private netPlayerIndex: 0 | 1 = 0;
   private pairRequestDialog: HTMLDivElement | null = null;
+  private quitDialog: HTMLDivElement | null = null;
 
   private readonly handlePairRequestInGame = (msg: Extract<ServerMsg, { type: 'pair-request' }>) => {
     if (this.pairRequestDialog) return;
@@ -121,7 +122,7 @@ export class GameScene extends Phaser.Scene {
     mkBtn('ACCEPT', '#00ffee', () => {
       net.send({ type: 'pair-accept', target: msg.from });
       d.remove(); this.pairRequestDialog = null;
-      this.scene.start('MenuScene');
+      setTimeout(() => this.scene.start('MenuScene'), 0);
     });
     mkBtn('DECLINE', '#ff4422', () => {
       net.send({ type: 'pair-reject', target: msg.from });
@@ -140,8 +141,13 @@ export class GameScene extends Phaser.Scene {
     this.splitDetected      = msg.split;
   };
   private readonly handleNetPartnerDisc = () => {
-    this.showStatus('Partner left', '#ff4422');
-    this.time.delayedCall(1500, () => this.scene.start('MenuScene'));
+    this.scene.start('MenuScene');
+  };
+  private readonly handleNetQuitGame = () => {
+    this.scene.start('MenuScene');
+  };
+  private readonly handleNetResetPlay = () => {
+    this.resetPlay();
   };
   private readonly handleNetSync = (msg: Extract<ServerMsg, { type: 'sync' }>) => {
     if (this.state.phase !== 'simulating') return;
@@ -200,6 +206,7 @@ export class GameScene extends Phaser.Scene {
 
     this.look = LOOKS[this.level.look ?? 'neon'];
 
+    this.coins = []; // clear stale WASM refs from previous session before placeKickoff()
     this.rapierWorld = new RAPIER.World({ x: 0, y: 0 });
     this.eventQueue = new RAPIER.EventQueue(true);
     this.colliderLabels = new Map();
@@ -245,9 +252,9 @@ export class GameScene extends Phaser.Scene {
     this.placeKickoff();
     this.setupInput();
 
-    // Esc → menu, F1 → reset same level
-    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('MenuScene'));
-    this.input.keyboard?.on('keydown-F1',  (e: KeyboardEvent) => { e.preventDefault(); this.scene.restart(); });
+    // ESC → quit dialog, Backspace → reset play
+    this.input.keyboard?.on('keydown-ESC',       () => this.showQuitDialog());
+    this.input.keyboard?.on('keydown-BACKSPACE',  () => this.resetPlay());
 
     // this.createSettingsPanel();  // hidden until needed for level testing
     this.draw();
@@ -264,17 +271,23 @@ export class GameScene extends Phaser.Scene {
       net.on('kick',                 this.handleNetKick);
       net.on('pos-stream',           this.handleNetPosStream);
       net.on('partner-disconnected', this.handleNetPartnerDisc);
+      net.on('quit-game',            this.handleNetQuitGame);
+      net.on('reset-play',           this.handleNetResetPlay);
       net.on('sync',                 this.handleNetSync);
     }
 
     this.events.once('shutdown', () => {
       this.pairRequestDialog?.remove();
       this.pairRequestDialog = null;
+      this.quitDialog?.remove();
+      this.quitDialog = null;
       net.off('pair-request', this.handlePairRequestInGame);
       if (this.netMode) {
         net.off('kick',                 this.handleNetKick);
         net.off('pos-stream',           this.handleNetPosStream);
         net.off('partner-disconnected', this.handleNetPartnerDisc);
+        net.off('quit-game',            this.handleNetQuitGame);
+        net.off('reset-play',           this.handleNetResetPlay);
         net.off('sync',                 this.handleNetSync);
       }
     });
@@ -392,6 +405,58 @@ export class GameScene extends Phaser.Scene {
     this.statusText.setText(msg).setColor(color).setAlpha(1);
     this.tweens.killTweensOf(this.statusText);
     this.tweens.add({ targets: this.statusText, alpha: 0, delay: 1000, duration: 500 });
+  }
+
+  private showQuitDialog() {
+    if (this.quitDialog) return;
+    const d = document.createElement('div');
+    this.quitDialog = d;
+    Object.assign(d.style, {
+      position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+      background: '#05051e', border: '1px solid #00ffee44',
+      padding: '28px 40px', zIndex: '300', fontFamily: 'monospace', textAlign: 'center',
+      minWidth: '240px',
+    });
+    const title = document.createElement('div');
+    title.textContent = 'Leave game?';
+    Object.assign(title.style, { color: '#00ffee', fontSize: '16px', letterSpacing: '3px', marginBottom: '24px' });
+    d.appendChild(title);
+    const mkBtn = (label: string, color: string, onClick: () => void) => {
+      const b = document.createElement('button');
+      Object.assign(b.style, {
+        background: 'transparent', border: `1px solid ${color}`, color,
+        fontFamily: 'monospace', fontSize: '13px', letterSpacing: '2px',
+        padding: '8px 20px', cursor: 'pointer', margin: '0 8px',
+      });
+      b.textContent = label;
+      b.addEventListener('click', onClick);
+      d.appendChild(b);
+    };
+    mkBtn('YES', '#ff4422', () => {
+      d.remove(); this.quitDialog = null;
+      if (this.netMode && net.connected) net.send({ type: 'quit-game' });
+      setTimeout(() => this.scene.start('MenuScene'), 0);
+    });
+    mkBtn('NO', '#00ffee', () => {
+      d.remove(); this.quitDialog = null;
+    });
+    document.body.appendChild(d);
+  }
+
+  private resetPlay() {
+    if (this.netMode && net.connected) net.send({ type: 'reset-play' });
+    // Reset coins to kickoff without changing scores or attacker
+    this.state.phase = 'kickoff';
+    this.state.lastKickedCoinIndex = null;
+    this.kickoffMove = true;
+    this.kickoffHitDetected = false;
+    this.splitDetected = false;
+    this.resultHandled = false;
+    this.pendingGoal = null;
+    this.lastFoulCoinIndex = null;
+    this.simFrameCount = 0;
+    this.placeKickoff();
+    this.updateUI();
   }
 
   // ─── Settings panel ───────────────────────────────────────────────────────────

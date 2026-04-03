@@ -54,6 +54,10 @@ export class MenuScene extends Phaser.Scene {
   create() {
     this.cfg = { ...(this.registry.get('gameConfig') ?? DEFAULT_CONFIG) };
     this.selectedLevel = this.registry.get('level') ?? fieldLevels[0];
+    this.levelBtns = [];
+    this.vsMyTxt = null; this.vsLabelTxt = null; this.vsOpponentTxt = null;
+    this.playTxt = null; this.onlineTxt = null;
+    this.lobbyEl = null;
 
     this.add.rectangle(CX, CY, CANVAS_WIDTH, CANVAS_HEIGHT, C_DARK);
 

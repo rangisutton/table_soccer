@@ -28,6 +28,8 @@ export type ServerMsg =
   | { type: 'paired';               with: string }
   | { type: 'unpairing';            reason: string }
   | { type: 'partner-disconnected'; name: string }
+  | { type: 'quit-game' }
+  | { type: 'reset-play' }
   | { type: 'select-level';         levelId: string; startingPlayer: string }
   | { type: 'kick';                 coinIndex: number; vx: number; vy: number }
   | { type: 'pos-stream';           positions: {x:number,y:number}[]; kickoffHit: boolean; split: boolean }
@@ -42,6 +44,8 @@ export type ClientMsg =
   | { type: 'pair-accept';   target: string }
   | { type: 'pair-reject';   target: string }
   | { type: 'unpair' }
+  | { type: 'quit-game' }
+  | { type: 'reset-play' }
   | { type: 'select-level';  levelId: string }
   | { type: 'kick';          coinIndex: number; vx: number; vy: number }
   | { type: 'pos-stream';    positions: {x:number,y:number}[]; kickoffHit: boolean; split: boolean }
