@@ -648,8 +648,8 @@ export class GameScene extends Phaser.Scene {
     if (this.state.phase === 'simulating') {
       if (!passiveWatching) {
         this.runSimulationChecks();
-        // Stream authoritative positions + glow flags to passive partner every frame
-        if (this.netMode) {
+        // Stream authoritative positions + glow flags to passive partner (~20Hz to avoid flooding)
+        if (this.netMode && this.simFrameCount % 2 === 1) {
           net.send({
             type: 'pos-stream',
             positions: this.coins.map(c => { const t = c.translation(); return { x: t.x, y: t.y }; }),
