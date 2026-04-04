@@ -17,33 +17,34 @@
       "y": 780
     }
   ],
+  "halfEdgeModes": [
+    "sink",
+    "block",
+    "block",
+    "block"
+  ],
   "goal": {
     "t": 0.5,
     "gap": 66,
     "spoke": 15
   },
-  "blockers": [],
+  "polys": [],
   "ellipses": [
     {
       "x": 98.99214081855315,
       "y": 397.76033115636733,
       "rx": 20,
       "ry": 20,
-      "angle": 0
-    },
-    {
-      "x": 100,
-      "y": 20,
-      "rx": 20,
-      "ry": 20,
-      "angle": 0
+      "angle": 0,
+      "mode": "sink"
     },
     {
       "x": 700,
       "y": 20,
       "rx": 20,
       "ry": 20,
-      "angle": 0
+      "angle": 0,
+      "mode": "sink"
     },
     {
       "x": 257.55875932007797,
@@ -79,6 +80,14 @@
       "rx": 11,
       "ry": 11,
       "angle": 0
+    },
+    {
+      "x": 100,
+      "y": 20,
+      "rx": 20,
+      "ry": 20,
+      "angle": 0,
+      "mode": "sink"
     }
   ],
   "start": [

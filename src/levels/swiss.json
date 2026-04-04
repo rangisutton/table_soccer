@@ -53,8 +53,8 @@
       "y": 756.192041993008
     },
     {
-      "x": 98.0623369964195,
-      "y": 741.027763076036
+      "x": 96.04043314082321,
+      "y": 744.0606188594304
     },
     {
       "x": 106.14995241880462,
@@ -81,12 +81,33 @@
       "y": 760
     }
   ],
+  "halfEdgeModes": [
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink",
+    "sink"
+  ],
   "goal": {
     "t": 0.5,
     "gap": 91,
     "spoke": 41
   },
-  "blockers": [],
+  "polys": [],
   "ellipses": [
     {
       "x": 602.527348967691,
@@ -126,5 +147,9 @@
   ],
   "start": null,
   "levelName": "swiss",
-  "imageUrl": "/field-images/swiss.png"
+  "imageUrl": "/field-images/swiss.png",
+  "look": "neon",
+  "coinRadius": 10,
+  "coinKickPower": 1,
+  "coinDrag": 5
 }
