@@ -63,6 +63,23 @@
   </div>
 
   <div>
+    <div style="color:#778899;font-size:11px;margin-bottom:3px;">Level type</div>
+    <select id="levelType" style="width:100%;background:#0a1a2a;border:1px solid #224466;color:#ffffff;font-family:monospace;font-size:12px;padding:4px 6px;">
+      <option value="field">Field (2 players, mirrored)</option>
+      <option value="course">Course (1 player, single goal)</option>
+    </select>
+  </div>
+
+  <div id="parSection" style="display:none;">
+    <div style="color:#778899;font-size:11px;margin-bottom:3px;">Par (max faults before fail)</div>
+    <div class="row">
+      <input type="number" id="levelPar" value="5" min="1" max="99"
+        style="width:60px;background:#0a1a2a;border:1px solid #224466;color:#ffffff;font-family:monospace;font-size:13px;padding:4px 6px;" />
+      <span style="color:#445566;font-size:10px;line-height:1.4;">faults allowed before<br>the run is failed</span>
+    </div>
+  </div>
+
+  <div>
     <div style="color:#778899;font-size:11px;margin-bottom:3px;">Tagline</div>
     <textarea id="levelTagline" placeholder="Short flavour text for menu card…" style="height:56px;"></textarea>
   </div>

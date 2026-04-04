@@ -85,6 +85,8 @@ export interface LevelDef {
   imageUrl?: string;
   /** Short flavour text shown on the menu preview card */
   tagline?: string;
+  /** Course mode only — maximum faults allowed before the run is failed */
+  par?: number;
   /** Coin physics — overrides menu settings on load */
   coinConfig?: CoinConfig;
   /** Visual theme */

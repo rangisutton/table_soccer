@@ -68,7 +68,7 @@ export class GameScene extends Phaser.Scene {
   // Static UI (above container)
   private statusText!: Phaser.GameObjects.Text;
 
-  // DOM panel elements
+  // DOM panel elements (two-player mode only — assigned in createUI when !isCourse)
   private domP1Score!: HTMLElement;
   private domP2Score!: HTMLElement;
   private domP1Status!: HTMLElement;
@@ -76,6 +76,16 @@ export class GameScene extends Phaser.Scene {
   private domP1Pips!: HTMLElement;
   private domP2Pips!: HTMLElement;
   private domTurnBar!: HTMLElement;
+
+  // Course mode
+  private isCourse = false;
+  private courseFaults = 0;
+  private courseTimerStartTime = 0; // Phaser timestamp of first kick
+  private courseTimerRunning = false;
+  private courseElapsedMs = 0;      // frozen on completion
+  private courseHudEl: HTMLDivElement | null = null;
+  private courseFaultEl: HTMLSpanElement | null = null;
+  private courseTimerEl: HTMLSpanElement | null = null;
 
   // Drag input
   private dragging = false;
@@ -201,6 +211,11 @@ export class GameScene extends Phaser.Scene {
     this.netMode        = this.registry.get('netMode')        ?? false;
     this.netPlayerIndex = this.registry.get('netPlayerIndex') ?? 0;
     this.goals = this.level.goals as [GoalPost, GoalPost];
+    this.isCourse           = this.level.type === 'course';
+    this.courseFaults       = 0;
+    this.courseTimerRunning = false;
+    this.courseElapsedMs    = 0;
+    this.courseTimerStartTime = 0;
 
     // Apply level coin config over menu settings
     if (this.level.coinConfig) {
@@ -302,29 +317,34 @@ export class GameScene extends Phaser.Scene {
   // ─── UI ──────────────────────────────────────────────────────────────────────
 
   private createUI() {
-    this.domP1Score  = document.getElementById('p1-score')!;
-    this.domP2Score  = document.getElementById('p2-score')!;
-    this.domP1Status = document.getElementById('p1-status')!;
-    this.domP2Status = document.getElementById('p2-status')!;
-    this.domP1Pips   = document.getElementById('p1-pips')!;
-    this.domP2Pips   = document.getElementById('p2-pips')!;
-
-    // Show scoreboard panels (hidden by default on menu)
-    document.getElementById('panel-left')!.style.display  = '';
-    document.getElementById('panel-right')!.style.display = '';
-
-    // Set player names
-    if (this.netMode) {
-      const p0Name = this.netPlayerIndex === 0 ? net.myName! : net.partner!;
-      const p1Name = this.netPlayerIndex === 0 ? net.partner! : net.myName!;
-      document.querySelector('#panel-left  .player-name')!.textContent = p0Name;
-      document.querySelector('#panel-right .player-name')!.textContent = p1Name;
+    if (this.isCourse) {
+      // Hide player score panels; build course-specific HUD
+      document.getElementById('panel-left')!.style.display  = 'none';
+      document.getElementById('panel-right')!.style.display = 'none';
+      this.buildCourseHud();
     } else {
-      document.querySelector('#panel-left  .player-name')!.textContent = 'Player 1';
-      document.querySelector('#panel-right .player-name')!.textContent = 'Player 2';
+      this.domP1Score  = document.getElementById('p1-score')!;
+      this.domP2Score  = document.getElementById('p2-score')!;
+      this.domP1Status = document.getElementById('p1-status')!;
+      this.domP2Status = document.getElementById('p2-status')!;
+      this.domP1Pips   = document.getElementById('p1-pips')!;
+      this.domP2Pips   = document.getElementById('p2-pips')!;
+
+      document.getElementById('panel-left')!.style.display  = '';
+      document.getElementById('panel-right')!.style.display = '';
+
+      if (this.netMode) {
+        const p0Name = this.netPlayerIndex === 0 ? net.myName! : net.partner!;
+        const p1Name = this.netPlayerIndex === 0 ? net.partner! : net.myName!;
+        document.querySelector('#panel-left  .player-name')!.textContent = p0Name;
+        document.querySelector('#panel-right .player-name')!.textContent = p1Name;
+      } else {
+        document.querySelector('#panel-left  .player-name')!.textContent = 'Player 1';
+        document.querySelector('#panel-right .player-name')!.textContent = 'Player 2';
+      }
     }
 
-    // "X playing" bar at bottom of screen
+    // Turn / status bar (both modes)
     this.domTurnBar = document.createElement('div');
     Object.assign(this.domTurnBar.style, {
       position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)',
@@ -341,6 +361,8 @@ export class GameScene extends Phaser.Scene {
 
     this.events.once('shutdown', () => {
       this.domTurnBar.remove();
+      this.courseHudEl?.remove();
+      this.courseHudEl = null;
       document.getElementById('panel-left')!.style.display  = 'none';
       document.getElementById('panel-right')!.style.display = 'none';
       document.querySelector('#panel-left  .player-name')!.textContent = 'Player 1';
@@ -348,7 +370,135 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private buildCourseHud() {
+    const hud = document.createElement('div');
+    this.courseHudEl = hud;
+    Object.assign(hud.style, {
+      position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)',
+      fontFamily: 'monospace', fontSize: '16px', letterSpacing: '2px',
+      color: '#00ffee', pointerEvents: 'none', zIndex: '60',
+      background: 'rgba(3,3,32,0.8)', padding: '6px 24px',
+      border: '1px solid #00ffee33', display: 'flex', gap: '28px',
+    });
+
+    const parEl   = document.createElement('span');
+    const faultEl = document.createElement('span');
+    const timerEl = document.createElement('span');
+    this.courseTimerEl = timerEl;
+    this.courseFaultEl = faultEl;
+
+    hud.appendChild(parEl);
+    hud.appendChild(faultEl);
+    hud.appendChild(timerEl);
+    document.body.appendChild(hud);
+
+    const par = this.level.par;
+    parEl.textContent = par != null ? `Par: ${par}` : '';
+    this.updateCourseHud();
+  }
+
+  private updateCourseHud() {
+    if (!this.courseFaultEl) return;
+    const par = this.level.par;
+    const faultColor = par != null && this.courseFaults > par ? '#ff4422' : '#00ffee';
+    this.courseFaultEl.style.color = faultColor;
+    this.courseFaultEl.textContent = `Faults: ${this.courseFaults}`;
+    if (this.courseTimerEl) {
+      const ms = this.courseTimerRunning
+        ? this.time.now - this.courseTimerStartTime
+        : this.courseElapsedMs;
+      this.courseTimerEl.textContent = courseTimeFmt(ms);
+    }
+  }
+
+  private showCourseResult(won: boolean) {
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed', inset: '0', zIndex: '400',
+      background: 'rgba(3,3,28,0.92)',
+      display: 'flex', justifyContent: 'center', alignItems: 'center',
+      fontFamily: 'monospace',
+    });
+
+    const panel = document.createElement('div');
+    Object.assign(panel.style, {
+      background: '#05051e', border: `1px solid ${won ? '#ffcc0044' : '#ff442244'}`,
+      padding: '40px 52px', textAlign: 'center', minWidth: '300px',
+    });
+    overlay.appendChild(panel);
+
+    const title = document.createElement('div');
+    title.textContent = won ? 'COURSE COMPLETE!' : 'COURSE FAILED';
+    Object.assign(title.style, {
+      color: won ? '#ffcc00' : '#ff4422',
+      fontSize: '22px', letterSpacing: '4px', marginBottom: '32px',
+    });
+    panel.appendChild(title);
+
+    const par = this.level.par;
+    const stats: [string, string][] = [
+      ['Faults', par != null ? `${this.courseFaults} / Par ${par}` : `${this.courseFaults}`],
+      ['Time', courseTimeFmt(this.courseElapsedMs)],
+    ];
+    for (const [label, value] of stats) {
+      const row = document.createElement('div');
+      Object.assign(row.style, { display: 'flex', justifyContent: 'space-between', gap: '48px', marginBottom: '12px' });
+      const l = document.createElement('span');
+      l.textContent = label; l.style.color = '#446688';
+      const v = document.createElement('span');
+      v.textContent = value; v.style.color = '#aabbcc';
+      row.appendChild(l); row.appendChild(v);
+      panel.appendChild(row);
+    }
+
+    const menuBtn = document.createElement('button');
+    Object.assign(menuBtn.style, {
+      background: 'transparent', border: '1px solid #00ffee',
+      color: '#00ffee', fontFamily: 'monospace', fontSize: '13px',
+      letterSpacing: '2px', padding: '10px 28px', cursor: 'pointer', marginTop: '28px',
+    });
+    menuBtn.textContent = 'RETURN TO MENU';
+    menuBtn.addEventListener('click', () => {
+      overlay.remove();
+      this.scene.start('MenuScene');
+    });
+    panel.appendChild(menuBtn);
+
+    const againBtn = document.createElement('button');
+    Object.assign(againBtn.style, {
+      background: 'transparent', border: '1px solid #ffcc00',
+      color: '#ffcc00', fontFamily: 'monospace', fontSize: '13px',
+      letterSpacing: '2px', padding: '10px 28px', cursor: 'pointer',
+      marginTop: '10px', marginLeft: '12px',
+    });
+    againBtn.textContent = 'PLAY AGAIN';
+    againBtn.addEventListener('click', () => {
+      overlay.remove();
+      this.scene.restart();
+    });
+    panel.appendChild(againBtn);
+
+    document.body.appendChild(overlay);
+    this.events.once('shutdown', () => overlay.remove());
+  }
+
   private updateUI() {
+    if (this.isCourse) {
+      const { phase } = this.state;
+      if (phase === 'kickoff') {
+        this.domTurnBar.textContent = 'Kick off!';
+        this.domTurnBar.style.color = '#00ffee';
+        this.domTurnBar.style.textShadow = '0 0 12px #00ffee88';
+      } else if (phase === 'playing') {
+        this.domTurnBar.textContent = 'Choose a coin';
+        this.domTurnBar.style.color = '#00ffee';
+        this.domTurnBar.style.textShadow = '0 0 12px #00ffee88';
+      } else {
+        this.domTurnBar.textContent = '';
+      }
+      this.updateCourseHud();
+      return;
+    }
     const { scores, attacker, phase } = this.state;
 
     this.domP1Score.textContent = `${scores[0]}`;
@@ -451,6 +601,20 @@ export class GameScene extends Phaser.Scene {
 
   private resetPlay() {
     if (this.netMode && net.connected) net.send({ type: 'reset-play' });
+    if (this.isCourse && this.state.phase !== 'gameover') {
+      this.courseFaults++;
+      const par = this.level.par;
+      if (par != null && this.courseFaults > par) {
+        this.courseTimerRunning = false;
+        this.courseElapsedMs = this.time.now - this.courseTimerStartTime;
+        this.state.phase = 'gameover';
+        this.showStatus('Course Failed!', '#ff4422');
+        this.updateCourseHud();
+        this.time.delayedCall(1800, () => this.showCourseResult(false));
+        return;
+      }
+      this.updateCourseHud();
+    }
     // Reset coins to kickoff without changing scores or attacker
     this.state.phase = 'kickoff';
     this.state.lastKickedCoinIndex = null;
@@ -812,6 +976,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private applyKickState(idx: number) {
+    // Start course timer on the very first kick
+    if (this.isCourse && !this.courseTimerRunning) {
+      this.courseTimerRunning = true;
+      this.courseTimerStartTime = this.time.now;
+    }
     this.state.lastKickedCoinIndex = idx;
     this.state.phase = 'simulating';
     this.splitDetected = false;
@@ -888,6 +1057,7 @@ export class GameScene extends Phaser.Scene {
       return s.life > 0;
     });
     this.glowPulses = this.glowPulses.filter(p => { p.life -= delta; return p.life > 0; });
+    if (this.isCourse && this.courseTimerRunning) this.updateCourseHud();
     this.draw();
   }
 
@@ -1019,6 +1189,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onGoal(scorer: PlayerId, isOwnGoal = false) {
+    if (this.isCourse) {
+      this.courseTimerRunning = false;
+      this.courseElapsedMs = this.time.now - this.courseTimerStartTime;
+      this.state.phase = 'gameover';
+      this.showStatus('Goal!', '#ffcc00');
+      this.updateCourseHud();
+      this.time.delayedCall(1200, () => this.showCourseResult(true));
+      return;
+    }
     this.state.scores[scorer]++;
     this.state.phase = 'goal';
 
@@ -1042,6 +1221,44 @@ export class GameScene extends Phaser.Scene {
   private onFoul() {
     const wasKickoff = this.kickoffMove;
     this.state.phase = 'foul';
+
+    if (this.isCourse) {
+      this.courseFaults++;
+      const par = this.level.par;
+      if (par != null && this.courseFaults > par) {
+        this.courseTimerRunning = false;
+        this.courseElapsedMs = this.time.now - this.courseTimerStartTime;
+        this.state.phase = 'gameover';
+        this.showStatus('Course Failed!', '#ff4422');
+        this.updateCourseHud();
+        this.time.delayedCall(1800, () => this.showCourseResult(false));
+        return;
+      }
+      this.showStatus(`Fault ${this.courseFaults}`, '#ff4422');
+      this.lastFoulCoinIndex = this.state.lastKickedCoinIndex;
+      this.splitDetected = false;
+      this.resultHandled = false;
+      this.pendingGoal = null;
+      this.kickoffMove = false;
+      this.state.lastKickedCoinIndex = null;
+      this.updateCourseHud();
+      if (wasKickoff) {
+        this.time.delayedCall(400, () => {
+          this.placeKickoff();
+          this.lastFoulCoinIndex = null;
+          this.state.phase = 'kickoff';
+          this.updateUI();
+        });
+      } else {
+        this.time.delayedCall(400, () => {
+          this.lastFoulCoinIndex = null;
+          this.state.phase = 'playing';
+          this.updateUI();
+        });
+      }
+      return;
+    }
+
     this.showStatus('Fault', '#ff4422');
     this.state.attacker = (1 - this.state.attacker) as PlayerId;
     this.lastFoulCoinIndex = this.state.lastKickedCoinIndex; // keep red until rotation
@@ -1062,8 +1279,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private rotateView(_attacker: PlayerId, nextPhase: 'kickoff' | 'playing') {
-    if (this.netMode) {
-      // Each player has a fixed view — no rotation between turns
+    if (this.netMode || this.isCourse) {
+      // Fixed view — no rotation
       this.lastFoulCoinIndex = null;
       this.state.phase = nextPhase;
       this.updateUI();
@@ -1266,27 +1483,35 @@ export class GameScene extends Phaser.Scene {
     g.closePath();
     g.fillPath();
 
-    // ── Half tints: top half cyan, bottom half magenta ──
-    // top half: polygon vertices with localY < 0, bridged at Y=0
-    this.drawHalfTint(g, verts, true,  C_CYAN,    0.07);
-    this.drawHalfTint(g, verts, false, C_MAGENTA, 0.07);
+    if (this.isCourse) {
+      // Single-colour border for courses — no team halves
+      g.lineStyle(6, C_CYAN, 0.12);
+      g.beginPath(); g.moveTo(verts[0].x, verts[0].y);
+      for (let i = 1; i < n; i++) g.lineTo(verts[i].x, verts[i].y);
+      g.closePath(); g.strokePath();
+      g.lineStyle(2, C_CYAN, 0.75);
+      g.beginPath(); g.moveTo(verts[0].x, verts[0].y);
+      for (let i = 1; i < n; i++) g.lineTo(verts[i].x, verts[i].y);
+      g.closePath(); g.strokePath();
+    } else {
+      // ── Half tints: top half cyan, bottom half magenta ──
+      this.drawHalfTint(g, verts, true,  C_CYAN,    0.07);
+      this.drawHalfTint(g, verts, false, C_MAGENTA, 0.07);
 
-    // ── Centre dividing line — span the full field width ──
-    const hw = Math.max(...this.level.boundary.map(v => Math.abs(v.x - CX)));
-    g.lineStyle(1, 0xffffff, 0.15);
-    g.beginPath(); g.moveTo(-hw, 0); g.lineTo(hw, 0); g.strokePath();
+      // ── Centre dividing line ──
+      const hw = Math.max(...this.level.boundary.map(v => Math.abs(v.x - CX)));
+      g.lineStyle(1, 0xffffff, 0.15);
+      g.beginPath(); g.moveTo(-hw, 0); g.lineTo(hw, 0); g.strokePath();
 
-    // ── Border: top half cyan, bottom half magenta (with glow) ──
-    for (let i = 0; i < n; i++) {
-      const a = verts[i], b = verts[(i + 1) % n];
-      const midY = (a.y + b.y) / 2;
-      const col = midY < 0 ? C_CYAN : C_MAGENTA;
-      // glow
-      g.lineStyle(6, col, 0.15);
-      g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.strokePath();
-      // bright line
-      g.lineStyle(2, col, 0.9);
-      g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.strokePath();
+      // ── Border: top half cyan, bottom half magenta ──
+      for (let i = 0; i < n; i++) {
+        const a = verts[i], b = verts[(i + 1) % n];
+        const col = (a.y + b.y) / 2 < 0 ? C_CYAN : C_MAGENTA;
+        g.lineStyle(6, col, 0.15);
+        g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.strokePath();
+        g.lineStyle(2, col, 0.9);
+        g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.strokePath();
+      }
     }
 
     // ── Goals ──
@@ -1618,6 +1843,13 @@ export class GameScene extends Phaser.Scene {
  * Midpoint-displacement lightning between two points.
  * Returns an array of Vec2 vertices to stroke.
  */
+function courseTimeFmt(ms: number): string {
+  const totalSecs = Math.floor(ms / 1000);
+  const m = Math.floor(totalSecs / 60);
+  const s = totalSecs % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 function lightningPath(a: Vec2, b: Vec2, depth = 3, spread = 0.35): Vec2[] {
   if (depth === 0) return [a, b];
   const len = Math.hypot(b.x - a.x, b.y - a.y);

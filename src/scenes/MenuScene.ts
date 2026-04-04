@@ -7,9 +7,7 @@ import { net, Player, ServerMsg } from '../net';
 
 const CX = CANVAS_WIDTH / 2;
 const CY = CANVAS_HEIGHT / 2;
-const C_CYAN    = 0x00ffee;
-const C_GOLD    = 0xffcc00;
-const C_DARK    = 0x030320;
+const C_DARK = 0x030320;
 
 // ─── Lobby state ──────────────────────────────────────────────────────────────
 
@@ -24,7 +22,11 @@ type LobbyState =
 export class MenuScene extends Phaser.Scene {
   private cfg!: GameConfig;
   private selectedLevel!: LevelDef;
-  private levelBtns: { level: LevelDef; bg: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text }[] = [];
+  private allLevels: LevelDef[] = [];
+
+  // ─── Menu DOM overlay ───────────────────────────────────────────────────────
+  private menuEl: HTMLDivElement | null = null;
+  private levelBtns: { level: LevelDef; el: HTMLButtonElement }[] = [];
 
   // ─── Preview card ───────────────────────────────────────────────────────────
   private previewEl: HTMLDivElement | null = null;
@@ -32,16 +34,20 @@ export class MenuScene extends Phaser.Scene {
   private previewTitle: HTMLDivElement | null = null;
   private previewTagline: HTMLDivElement | null = null;
 
+  // ─── Action buttons ─────────────────────────────────────────────────────────
+  private playBtnEl: HTMLButtonElement | null = null;
+  private onlineBtnEl: HTMLButtonElement | null = null;
+
+  // ─── vs display ─────────────────────────────────────────────────────────────
+  private vsMyEl: HTMLDivElement | null = null;
+  private vsLabelEl: HTMLDivElement | null = null;
+  private vsOpponentEl: HTMLDivElement | null = null;
+
   // ─── Lobby state ────────────────────────────────────────────────────────────
   private lobbyEl: HTMLDivElement | null = null;
   private lobbyState: LobbyState = 'name-entry';
-  private pendingPairFrom: string | null = null; // incoming pair requester
-  private pendingPairTo: string | null = null;   // outgoing pair target
-  private playTxt: Phaser.GameObjects.Text | null = null;
-  private onlineTxt: Phaser.GameObjects.Text | null = null;
-  private vsMyTxt: Phaser.GameObjects.Text | null = null;
-  private vsLabelTxt: Phaser.GameObjects.Text | null = null;
-  private vsOpponentTxt: Phaser.GameObjects.Text | null = null;
+  private pendingPairFrom: string | null = null;
+  private pendingPairTo: string | null = null;
   private handlersRegistered = false;
 
   // Stored handler refs for net.off() cleanup
@@ -59,61 +65,87 @@ export class MenuScene extends Phaser.Scene {
 
   create() {
     this.cfg = { ...(this.registry.get('gameConfig') ?? DEFAULT_CONFIG) };
-    this.selectedLevel = this.registry.get('level') ?? fieldLevels[0];
+    this.allLevels = [...fieldLevels, ...courseLevels];
+    this.selectedLevel = this.registry.get('level') ?? this.allLevels[0];
     this.levelBtns = [];
-    this.vsMyTxt = null; this.vsLabelTxt = null; this.vsOpponentTxt = null;
-    this.playTxt = null; this.onlineTxt = null;
-    this.lobbyEl = null;
 
+    // Minimal Phaser background — the DOM overlay sits on top
     this.add.rectangle(CX, CY, CANVAS_WIDTH, CANVAS_HEIGHT, C_DARK);
 
-    this.add.text(CX, 44, 'TABLE SOCCER', {
-      fontSize: '34px', fontFamily: 'monospace', fontStyle: 'bold',
-      color: '#00ffee', stroke: '#003333', strokeThickness: 4,
-    }).setOrigin(0.5, 0.5);
+    this.buildMenuDOM();
 
-    let y = 90;
-
-    // ── Field levels ──────────────────────────────────────────────────────────
-    if (fieldLevels.length > 0) {
-      this.add.text(CX, y, 'FIELDS', {
-        fontSize: '11px', fontFamily: 'monospace', color: '#446688',
-      }).setOrigin(0.5, 0.5);
-      y += 22;
-      y = this.buildLevelRow(fieldLevels, y);
-      y += 12;
+    if (net.connected) {
+      this.registerNetHandlers();
+      this.updateVsDisplay();
     }
 
-    // ── Course levels ─────────────────────────────────────────────────────────
-    if (courseLevels.length > 0) {
-      this.add.text(CX, y, 'COURSES', {
-        fontSize: '11px', fontFamily: 'monospace', color: '#446688',
-      }).setOrigin(0.5, 0.5);
-      y += 22;
-      y = this.buildLevelRow(courseLevels, y);
-      y += 12;
+    this.highlightSelected();
+    this.updatePreview();
+
+    this.events.on('shutdown', () => {
+      this.menuEl?.remove();
+      this.menuEl = null;
+      this.lobbyEl?.remove();
+      this.lobbyEl = null;
+      this.unregisterNetHandlers();
+    });
+  }
+
+  // ─── DOM menu construction ───────────────────────────────────────────────────
+
+  private buildMenuDOM() {
+    const canvas = this.game.canvas;
+    const parent = canvas.parentElement!;
+    if (getComputedStyle(parent).position === 'static') {
+      parent.style.position = 'relative';
     }
 
-    y += 16; // gap below level buttons
+    const wrap = document.createElement('div');
+    this.menuEl = wrap;
+    Object.assign(wrap.style, {
+      position: 'absolute', inset: '0',
+      overflowX: 'hidden', overflowY: 'auto',
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      padding: '24px 16px 32px',
+      boxSizing: 'border-box',
+      background: '#030320',
+      fontFamily: 'monospace',
+      color: '#aabbcc',
+    });
+    parent.appendChild(wrap);
 
-    // ── Level preview card (DOM, positioned over this canvas gap) ─────────────
-    this.createPreviewCard(y);
-    y += 218; // reserve canvas height for the card
+    // ── Title ─────────────────────────────────────────────────────────────────
+    const titleEl = document.createElement('div');
+    Object.assign(titleEl.style, {
+      color: '#00ffee', fontSize: '34px', fontWeight: 'bold',
+      letterSpacing: '4px', textShadow: '0 0 20px #00ffee44',
+      marginBottom: '20px', textAlign: 'center',
+    });
+    titleEl.textContent = 'TABLE SOCCER';
+    wrap.appendChild(titleEl);
 
-    y += 16; // gap above play button
+    // ── Play + Online buttons ─────────────────────────────────────────────────
+    const actionRow = document.createElement('div');
+    Object.assign(actionRow.style, {
+      display: 'flex', gap: '20px', marginBottom: '10px',
+    });
+    wrap.appendChild(actionRow);
 
-    // ── Play button ──────────────────────────────────────────────────────────
     const pairedNow = net.connected && !!net.partner;
-    const playBg = this.add.rectangle(CX - 68, y, 120, 52, 0x000000, 0)
-      .setStrokeStyle(2, C_GOLD).setInteractive({ useHandCursor: true });
-    this.playTxt = this.add.text(CX - 68, y, pairedNow ? 'PLAY\nONLINE' : 'PLAY', {
-      fontSize: pairedNow ? '16px' : '28px', fontFamily: 'monospace', fontStyle: 'bold', color: '#ffcc00',
-      align: 'center',
-    }).setOrigin(0.5, 0.5);
 
-    playBg.on('pointerover', () => { playBg.setFillStyle(C_GOLD, 0.15); this.playTxt!.setColor('#ffffff'); });
-    playBg.on('pointerout',  () => { playBg.setFillStyle(0, 0);         this.playTxt!.setColor('#ffcc00'); });
-    playBg.on('pointerup',   () => {
+    this.playBtnEl = document.createElement('button');
+    const pb = this.playBtnEl;
+    Object.assign(pb.style, {
+      background: 'transparent', border: '2px solid #ffcc00',
+      color: '#ffcc00', fontFamily: 'monospace',
+      fontSize: pairedNow ? '16px' : '28px', fontWeight: 'bold',
+      padding: '10px 24px', cursor: 'pointer',
+      minWidth: '120px', minHeight: '52px', lineHeight: '1.2',
+    });
+    pb.innerHTML = pairedNow ? 'PLAY<br>ONLINE' : 'PLAY';
+    pb.addEventListener('mouseover', () => { pb.style.background = 'rgba(255,204,0,0.15)'; pb.style.color = '#ffffff'; });
+    pb.addEventListener('mouseout',  () => { pb.style.background = 'transparent';            pb.style.color = '#ffcc00'; });
+    pb.addEventListener('click', () => {
       this.registry.set('gameConfig', { ...this.cfg });
       this.registry.set('level', this.selectedLevel);
       if (net.connected && net.partner) {
@@ -125,54 +157,177 @@ export class MenuScene extends Phaser.Scene {
       }
       this.scene.start('GameScene');
     });
+    actionRow.appendChild(pb);
 
-    // ── Online button ─────────────────────────────────────────────────────────
-    const onlineBg = this.add.rectangle(CX + 68, y, 120, 52, 0x000000, 0)
-      .setStrokeStyle(2, C_CYAN).setInteractive({ useHandCursor: true });
-    this.onlineTxt = this.add.text(CX + 68, y, net.connected ? 'LOBBY' : 'LOGIN', {
-      fontSize: '18px', fontFamily: 'monospace', fontStyle: 'bold', color: '#00ffee',
-    }).setOrigin(0.5, 0.5);
+    this.onlineBtnEl = document.createElement('button');
+    const ob = this.onlineBtnEl;
+    Object.assign(ob.style, {
+      background: 'transparent', border: '2px solid #00ffee',
+      color: '#00ffee', fontFamily: 'monospace',
+      fontSize: '18px', fontWeight: 'bold',
+      padding: '10px 24px', cursor: 'pointer',
+      minWidth: '120px', minHeight: '52px',
+    });
+    ob.textContent = net.connected ? 'LOBBY' : 'LOGIN';
+    ob.addEventListener('mouseover', () => { ob.style.background = 'rgba(0,255,238,0.15)'; ob.style.color = '#ffffff'; });
+    ob.addEventListener('mouseout',  () => { ob.style.background = 'transparent';           ob.style.color = '#00ffee'; });
+    ob.addEventListener('click', () => this.openLobby());
+    actionRow.appendChild(ob);
 
-    onlineBg.on('pointerover', () => { onlineBg.setFillStyle(C_CYAN, 0.15); this.onlineTxt!.setColor('#ffffff'); });
-    onlineBg.on('pointerout',  () => { onlineBg.setFillStyle(0, 0);         this.onlineTxt!.setColor('#00ffee'); });
-    onlineBg.on('pointerup',   () => this.openLobby());
+    // ── vs display (hidden until connected) ───────────────────────────────────
+    const vsWrap = document.createElement('div');
+    Object.assign(vsWrap.style, {
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      gap: '4px', marginBottom: '12px', minHeight: '0',
+    });
+    wrap.appendChild(vsWrap);
 
-    // ── vs display ────────────────────────────────────────────────────────────
-    y += 52;
-    this.vsMyTxt = this.add.text(CX, y, '', {
-      fontSize: '22px', fontFamily: 'monospace', color: '#00ffee',
-    }).setOrigin(0.5, 0.5).setVisible(false);
-    y += 26;
-    this.vsLabelTxt = this.add.text(CX, y, 'vs', {
-      fontSize: '12px', fontFamily: 'monospace', color: '#334455', letterSpacing: 4,
-    }).setOrigin(0.5, 0.5).setVisible(false);
-    y += 26;
-    this.vsOpponentTxt = this.add.text(CX, y, '', {
-      fontSize: '22px', fontFamily: 'monospace', color: '#334455',
-    }).setOrigin(0.5, 0.5).setVisible(false);
-    y += 28;
+    this.vsMyEl = document.createElement('div');
+    Object.assign(this.vsMyEl.style, {
+      color: '#00ffee', fontSize: '22px', display: 'none', textAlign: 'center',
+    });
+    vsWrap.appendChild(this.vsMyEl);
 
-    // Restore status if already connected from a previous scene visit
-    if (net.connected) {
-      this.registerNetHandlers();
-      this.updateVsDisplay();
+    this.vsLabelEl = document.createElement('div');
+    Object.assign(this.vsLabelEl.style, {
+      color: '#334455', fontSize: '12px', letterSpacing: '4px', display: 'none',
+    });
+    this.vsLabelEl.textContent = 'vs';
+    vsWrap.appendChild(this.vsLabelEl);
+
+    this.vsOpponentEl = document.createElement('div');
+    Object.assign(this.vsOpponentEl.style, {
+      color: '#334455', fontSize: '22px', display: 'none', textAlign: 'center',
+    });
+    vsWrap.appendChild(this.vsOpponentEl);
+
+    // ── Preview card with arrow navigation ───────────────────────────────────
+    const previewRow = document.createElement('div');
+    Object.assign(previewRow.style, {
+      display: 'flex', alignItems: 'center', gap: '8px',
+      marginBottom: '20px',
+    });
+    wrap.appendChild(previewRow);
+
+    const makeArrow = (symbol: string, onClick: () => void) => {
+      const btn = document.createElement('button');
+      Object.assign(btn.style, {
+        background: 'transparent', border: '1px solid #224455',
+        color: '#446688', fontFamily: 'monospace', fontSize: '22px',
+        width: '36px', height: '36px', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flexShrink: '0', padding: '0', lineHeight: '1',
+      });
+      btn.textContent = symbol;
+      btn.addEventListener('mouseover', () => { btn.style.borderColor = '#00ffee'; btn.style.color = '#00ffee'; });
+      btn.addEventListener('mouseout',  () => { btn.style.borderColor = '#224455'; btn.style.color = '#446688'; });
+      btn.addEventListener('click', onClick);
+      return btn;
+    };
+
+    previewRow.appendChild(makeArrow('◀', () => this.stepLevel(-1)));
+
+    const card = document.createElement('div');
+    this.previewEl = card;
+    Object.assign(card.style, {
+      width: '280px', maxWidth: '80vw',
+      background: '#05051e', border: '1px solid #224455',
+      pointerEvents: 'none', flexShrink: '0',
+    });
+
+    this.previewTitle = document.createElement('div');
+    Object.assign(this.previewTitle.style, {
+      color: '#00ffee', fontSize: '13px', letterSpacing: '3px',
+      textTransform: 'uppercase', textAlign: 'center',
+      padding: '10px 12px 6px',
+    });
+    card.appendChild(this.previewTitle);
+
+    this.previewImg = document.createElement('img');
+    Object.assign(this.previewImg.style, {
+      display: 'block', width: '100%', aspectRatio: '1', objectFit: 'cover',
+    });
+    card.appendChild(this.previewImg);
+
+    this.previewTagline = document.createElement('div');
+    Object.assign(this.previewTagline.style, {
+      color: '#556677', fontSize: '11px', lineHeight: '1.6',
+      padding: '8px 12px 10px', textAlign: 'center',
+    });
+    card.appendChild(this.previewTagline);
+    previewRow.appendChild(card);
+
+    previewRow.appendChild(makeArrow('▶', () => this.stepLevel(1)));
+
+    // ── Level buttons ─────────────────────────────────────────────────────────
+    if (fieldLevels.length > 0) {
+      wrap.appendChild(this.makeSectionLabel('FIELDS'));
+      wrap.appendChild(this.buildLevelGrid(fieldLevels));
+      wrap.appendChild(this.makeSpacer(12));
     }
 
-    this.add.text(CX, y, 'Drag a coin to kick  •  Pass between the other two  •  First to 3 goals wins', {
-      fontSize: '11px', fontFamily: 'monospace', color: '#334455', align: 'center',
-    }).setOrigin(0.5, 0.5);
+    if (courseLevels.length > 0) {
+      wrap.appendChild(this.makeSectionLabel('COURSES'));
+      wrap.appendChild(this.buildLevelGrid(courseLevels));
+      wrap.appendChild(this.makeSpacer(12));
+    }
 
-    this.highlightSelected();
-    this.updatePreview();
-
-    // Clean up on scene shutdown
-    this.events.on('shutdown', () => {
-      this.lobbyEl?.remove();
-      this.lobbyEl = null;
-      this.previewEl?.remove();
-      this.previewEl = null;
-      this.unregisterNetHandlers();
+    // ── Hint ─────────────────────────────────────────────────────────────────
+    const hint = document.createElement('div');
+    Object.assign(hint.style, {
+      color: '#334455', fontSize: '11px', textAlign: 'center',
+      maxWidth: '420px', lineHeight: '1.6', marginTop: '8px',
     });
+    hint.textContent = 'Drag a coin to kick  •  Pass between the other two  •  First to 3 goals wins';
+    wrap.appendChild(hint);
+  }
+
+  private makeSectionLabel(text: string): HTMLDivElement {
+    const el = document.createElement('div');
+    Object.assign(el.style, {
+      color: '#446688', fontSize: '11px', letterSpacing: '2px',
+      textTransform: 'uppercase', marginBottom: '8px', textAlign: 'center',
+    });
+    el.textContent = text;
+    return el;
+  }
+
+  private makeSpacer(h: number): HTMLDivElement {
+    const el = document.createElement('div');
+    el.style.height = `${h}px`;
+    return el;
+  }
+
+  private buildLevelGrid(levels: LevelDef[]): HTMLDivElement {
+    const grid = document.createElement('div');
+    Object.assign(grid.style, {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(3, 140px)',
+      gap: '8px',
+    });
+
+    for (const level of levels) {
+      const btn = document.createElement('button');
+      Object.assign(btn.style, {
+        background: 'transparent', border: '1px solid #224455',
+        color: '#778899', fontFamily: 'monospace', fontSize: '13px',
+        padding: '9px 8px', cursor: 'pointer', textAlign: 'center',
+      });
+      btn.textContent = level.label;
+      btn.addEventListener('mouseover', () => {
+        if (this.selectedLevel !== level) { btn.style.borderColor = '#00ffee'; btn.style.color = '#00ffee'; }
+      });
+      btn.addEventListener('mouseout', () => this.highlightSelected());
+      btn.addEventListener('click', () => {
+        this.selectedLevel = level;
+        this.highlightSelected();
+        this.updatePreview();
+      });
+      this.levelBtns.push({ level, el: btn });
+      grid.appendChild(btn);
+    }
+
+    return grid;
   }
 
   // ─── Lobby overlay ────────────────────────────────────────────────────────────
@@ -202,7 +357,6 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private closeLobby() {
-    // Only remove the DOM overlay — keep net handlers active for the scene's lifetime
     this.lobbyEl?.remove();
     this.lobbyEl = null;
   }
@@ -275,7 +429,6 @@ export class MenuScene extends Phaser.Scene {
 
       case 'lobby': {
         h2(`LOBBY — ${net.myName}`);
-        // User list rendered by onUserList; placeholder until first message arrives
         const listEl = document.createElement('div');
         listEl.id = 'lobby-user-list';
         Object.assign(listEl.style, { marginBottom: '20px', minHeight: '60px' });
@@ -284,12 +437,11 @@ export class MenuScene extends Phaser.Scene {
         btn('DISCONNECT', '#445566', () => {
           net.disconnect();
           this.closeLobby();
-          if (this.onlineTxt) this.onlineTxt.setText('LOGIN');
-          this.vsMyTxt?.setVisible(false);
-          this.vsLabelTxt?.setVisible(false);
-          this.vsOpponentTxt?.setVisible(false);
+          if (this.onlineBtnEl) this.onlineBtnEl.textContent = 'LOGIN';
+          if (this.vsMyEl)       this.vsMyEl.style.display = 'none';
+          if (this.vsLabelEl)    this.vsLabelEl.style.display = 'none';
+          if (this.vsOpponentEl) this.vsOpponentEl.style.display = 'none';
         });
-        // Immediately request the current user list
         net.send({ type: 'list' });
         break;
       }
@@ -331,7 +483,7 @@ export class MenuScene extends Phaser.Scene {
           this.lobbyState = 'lobby';
           this.renderLobby();
           this.updateVsDisplay();
-          if (this.playTxt) { this.playTxt.setText('PLAY'); this.playTxt.setFontSize(28); }
+          if (this.playBtnEl) { this.playBtnEl.textContent = 'PLAY'; this.playBtnEl.style.fontSize = '28px'; }
         });
         break;
       }
@@ -435,7 +587,7 @@ export class MenuScene extends Phaser.Scene {
         });
         pairBtn.textContent = 'PAIR';
         pairBtn.addEventListener('click', () => {
-          if (net.partner) net.send({ type: 'unpair' }); // drop existing pairing first
+          if (net.partner) net.send({ type: 'unpair' });
           net.send({ type: 'pair-request', target: p.name });
           this.pendingPairTo = p.name;
           this.lobbyState = 'pending-out';
@@ -457,13 +609,11 @@ export class MenuScene extends Phaser.Scene {
     this.pendingPairTo = null;
     this.pendingPairFrom = null;
     this.lobbyState = 'paired';
-    // Close the lobby overlay — level selection happens on the main menu
     this.closeLobby();
     this.updateVsDisplay();
-    // Update PLAY button to show paired state
-    if (this.playTxt) {
-      this.playTxt.setText('PLAY\nONLINE');
-      this.playTxt.setFontSize(16);
+    if (this.playBtnEl) {
+      this.playBtnEl.innerHTML = 'PLAY<br>ONLINE';
+      this.playBtnEl.style.fontSize = '16px';
     }
   }
 
@@ -477,23 +627,22 @@ export class MenuScene extends Phaser.Scene {
     this.lobbyState = 'lobby';
     if (this.lobbyEl) this.renderLobby('Partner unpairing.');
     this.updateVsDisplay();
-    if (this.playTxt) { this.playTxt.setText('PLAY'); this.playTxt.setFontSize(28); }
+    if (this.playBtnEl) { this.playBtnEl.textContent = 'PLAY'; this.playBtnEl.style.fontSize = '28px'; }
   }
 
   private onPartnerDisconnected(_msg: Extract<ServerMsg, { type: 'partner-disconnected' }>) {
     if (!net.connected) {
-      // We were disconnected
       this.closeLobby();
-      if (this.onlineTxt) this.onlineTxt.setText('LOGIN');
-      this.vsMyTxt?.setVisible(false);
-      this.vsLabelTxt?.setVisible(false);
-      this.vsOpponentTxt?.setVisible(false);
+      if (this.onlineBtnEl)    this.onlineBtnEl.textContent = 'LOGIN';
+      if (this.vsMyEl)         this.vsMyEl.style.display = 'none';
+      if (this.vsLabelEl)      this.vsLabelEl.style.display = 'none';
+      if (this.vsOpponentEl)   this.vsOpponentEl.style.display = 'none';
       return;
     }
     this.lobbyState = 'lobby';
     if (this.lobbyEl) this.renderLobby('Partner disconnected.');
     this.updateVsDisplay();
-    if (this.playTxt) { this.playTxt.setText('PLAY'); this.playTxt.setFontSize(28); }
+    if (this.playBtnEl) { this.playBtnEl.textContent = 'PLAY'; this.playBtnEl.style.fontSize = '28px'; }
   }
 
   private onSelectLevel(msg: Extract<ServerMsg, { type: 'select-level' }>) {
@@ -505,110 +654,25 @@ export class MenuScene extends Phaser.Scene {
   // ─── vs display ──────────────────────────────────────────────────────────────
 
   private updateVsDisplay() {
-    if (!this.vsMyTxt) return;
-    this.vsMyTxt.setText(net.myName ?? '').setVisible(true);
-    this.vsLabelTxt!.setVisible(true);
+    if (!this.vsMyEl) return;
+    this.vsMyEl.textContent = net.myName ?? '';
+    this.vsMyEl.style.display = '';
+    this.vsLabelEl!.style.display = '';
     const opponent = net.partner ?? '-----';
-    this.vsOpponentTxt!
-      .setText(opponent)
-      .setColor(net.partner ? '#ff00cc' : '#334455')
-      .setVisible(true);
-    if (this.onlineTxt) this.onlineTxt.setText('LOBBY');
+    this.vsOpponentEl!.textContent = opponent;
+    this.vsOpponentEl!.style.color = net.partner ? '#ff00cc' : '#334455';
+    this.vsOpponentEl!.style.display = '';
+    if (this.onlineBtnEl) this.onlineBtnEl.textContent = 'LOBBY';
   }
 
-  // ─── Level grid (existing) ───────────────────────────────────────────────────
+  // ─── Level grid ──────────────────────────────────────────────────────────────
 
-  private buildLevelRow(levels: LevelDef[], y: number): number {
-    const btnW = 140, btnH = 38, padX = 16, cols = 3;
-    const rowW = cols * btnW + (cols - 1) * padX;
-    const startX = CX - rowW / 2 + btnW / 2;
-
-    for (let i = 0; i < levels.length; i++) {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const bx = startX + col * (btnW + padX);
-      const by = y + row * (btnH + 8) + btnH / 2;
-      const level = levels[i];
-
-      const bg = this.add.rectangle(bx, by, btnW, btnH, 0x000000, 0)
-        .setStrokeStyle(1, 0x224455).setInteractive({ useHandCursor: true });
-      const lbl = this.add.text(bx, by, level.label, {
-        fontSize: '13px', fontFamily: 'monospace', color: '#778899',
-      }).setOrigin(0.5, 0.5);
-
-      bg.on('pointerover', () => {
-        if (this.selectedLevel !== level) { bg.setStrokeStyle(1, C_CYAN); lbl.setColor('#00ffee'); }
-      });
-      bg.on('pointerout', () => this.highlightSelected());
-      bg.on('pointerup', () => {
-        this.selectedLevel = level;
-        this.highlightSelected();
-        this.updatePreview();
-      });
-
-      this.levelBtns.push({ level, bg, label: lbl });
-    }
-
-    const rows = Math.ceil(levels.length / cols);
-    return y + rows * (btnH + 8);
-  }
-
-  private createPreviewCard(canvasY: number) {
-    const canvas = this.game.canvas;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = rect.width  / CANVAS_WIDTH;
-    const scaleY = rect.height / CANVAS_HEIGHT;
-    // Card is 280px wide in screen px, centered on canvas
-    const cardW = 280;
-
-    const el = document.createElement('div');
-    this.previewEl = el;
-    Object.assign(el.style, {
-      position: 'fixed',
-      left:   `${rect.left + rect.width * 0.5 - cardW / 2}px`,
-      top:    `${rect.top  + canvasY * scaleY}px`,
-      width:  `${cardW}px`,
-      background: '#05051e',
-      border: '1px solid #224455',
-      fontFamily: 'monospace',
-      pointerEvents: 'none',
-      zIndex: '10',
-    });
-
-    const title = document.createElement('div');
-    this.previewTitle = title;
-    Object.assign(title.style, {
-      color: '#00ffee',
-      fontSize: '13px',
-      letterSpacing: '3px',
-      textTransform: 'uppercase',
-      textAlign: 'center',
-      padding: '10px 12px 6px',
-    });
-    el.appendChild(title);
-
-    const img = document.createElement('img');
-    this.previewImg = img;
-    Object.assign(img.style, {
-      display: 'block',
-      width: '100%',
-      aspectRatio: '1',
-      objectFit: 'cover',
-    });
-    el.appendChild(img);
-
-    const tagline = document.createElement('div');
-    this.previewTagline = tagline;
-    Object.assign(tagline.style, {
-      color: '#556677',
-      fontSize: '11px',
-      lineHeight: '1.6',
-      padding: '8px 12px 10px',
-      textAlign: 'center',
-    });
-    el.appendChild(tagline);
-
-    document.body.appendChild(el);
+  private stepLevel(dir: 1 | -1) {
+    const idx = this.allLevels.indexOf(this.selectedLevel);
+    const next = (idx + dir + this.allLevels.length) % this.allLevels.length;
+    this.selectedLevel = this.allLevels[next];
+    this.highlightSelected();
+    this.updatePreview();
   }
 
   private updatePreview() {
@@ -620,17 +684,17 @@ export class MenuScene extends Phaser.Scene {
     this.previewTitle!.textContent = level.label;
     this.previewImg!.src = menuUrl;
     this.previewImg!.style.display = 'block';
-    // Hide image gracefully if no menu image exists for this level
     this.previewImg!.onerror = () => { this.previewImg!.style.display = 'none'; };
     this.previewTagline!.textContent = level.tagline ?? '';
   }
 
   private highlightSelected() {
-    for (const { level, bg, label } of this.levelBtns) {
+    for (const { level, el } of this.levelBtns) {
       const active = this.selectedLevel === level;
-      bg.setStrokeStyle(active ? 2 : 1, active ? C_GOLD : 0x224455);
-      bg.setFillStyle(active ? C_GOLD : 0x000000, active ? 0.1 : 0);
-      label.setColor(active ? '#ffcc00' : '#778899');
+      el.style.borderColor  = active ? '#ffcc00' : '#224455';
+      el.style.borderWidth  = active ? '2px'     : '1px';
+      el.style.color        = active ? '#ffcc00' : '#778899';
+      el.style.background   = active ? 'rgba(255,204,0,0.1)' : 'transparent';
     }
   }
 }

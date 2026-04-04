@@ -68,6 +68,8 @@ const state = {
   drag: null as DragTarget | null,
   snapGrid: true,
   levelName: 'My Field',
+  levelType: 'field' as 'field' | 'course',
+  par: 5,
   tagline: '',
   imageUrl: null as string | null,
   look: 'neon' as string,
@@ -83,7 +85,22 @@ const state = {
 
 function fullBoundary(): Vec2[] {
   if (state.halfVerts.length < 2) return [];
+  if (state.levelType === 'course') return [...state.halfVerts];
   return [...state.halfVerts, ...state.halfVerts.map(mirror)];
+}
+
+/** For courses: the closing edge between last and first vert, where the goal sits. */
+function courseSeam(): [Vec2, Vec2] | null {
+  const n = state.halfVerts.length;
+  if (n < 2) return null;
+  return [state.halfVerts[n - 1], state.halfVerts[0]];
+}
+
+/** The seam carrying the primary (top/only) goal. */
+function activeGoalSeam(): [Vec2, Vec2] | null {
+  if (state.levelType === 'course') return courseSeam();
+  const seams = orderedSeams();
+  return seams ? seams[0] : null;
 }
 
 function seamEdge1(): [Vec2, Vec2] | null {
@@ -118,12 +135,14 @@ function computeGoal(seam: [Vec2, Vec2], scorer: 0 | 1): GoalPost {
   return { leftBase, rightBase, leftTip, rightTip, scorer };
 }
 
-/** All polys including 180° mirrors of user-drawn ones */
+/** All polys; mirrors included only for field levels */
 function allPolys(): { verts: Vec2[]; isMirror: boolean; mode: ObstacleMode }[] {
   const result: { verts: Vec2[]; isMirror: boolean; mode: ObstacleMode }[] = [];
   for (const p of state.polys) {
     result.push({ verts: p.verts, isMirror: false, mode: p.mode });
-    result.push({ verts: p.verts.map(mirror), isMirror: true, mode: p.mode });
+    if (state.levelType === 'field') {
+      result.push({ verts: p.verts.map(mirror), isMirror: true, mode: p.mode });
+    }
   }
   return result;
 }
@@ -241,6 +260,7 @@ function findPolyEdgeHit(p: Vec2, polyIdx: number): { insertAt: number; point: V
 
 function draw() {
   ctx.clearRect(0, 0, CW, CH);
+  const isCourse = state.levelType === 'course';
   const showBg = !exportMode && state.showBgImage && state.bgImage !== null;
   if (!exportMode) {
     ctx.fillStyle = '#010118';
@@ -254,13 +274,13 @@ function draw() {
   const boundary = fullBoundary();
   if (boundary.length >= 4) {
     if (!showBg) drawFieldFill(boundary);
-    if (!showBg) drawHalfTints(boundary);
+    if (!showBg && !isCourse) drawHalfTints(boundary);
     drawBoundaryBorder(boundary);
   }
 
   if (!exportMode) {
-    drawSeamEdges();
-    drawMirrorHalf();
+    if (!isCourse) drawSeamEdges();
+    if (!isCourse) drawMirrorHalf();
     drawUserHalf();
   }
   drawEllipses(showBg);
@@ -321,6 +341,7 @@ function drawHalfFill(boundary: Vec2[], topHalf: boolean, color: string) {
 
 function drawBoundaryBorder(boundary: Vec2[]) {
   const n = boundary.length;
+  const hn = state.halfVerts.length;
   if (exportMode) {
     ctx.strokeStyle = '#00ffee'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(boundary[0].x, boundary[0].y);
@@ -328,22 +349,24 @@ function drawBoundaryBorder(boundary: Vec2[]) {
     ctx.closePath(); ctx.stroke();
     return;
   }
-  const seams = orderedSeams();
-  const hn = state.halfVerts.length;
+  const seams = state.levelType === 'field' ? orderedSeams() : null;
   for (let i = 0; i < n; i++) {
     const a = boundary[i], b = boundary[(i + 1) % n];
+    // Course: closing edge (last→first) is always the goal gap — skip it
+    if (state.levelType === 'course' && i === n - 1) continue;
+    // Field: skip the two seam edges (goal openings)
     const isSeam = seams && seams.some(([sa, sb]) => dist2(a, sa) < 2 && dist2(b, sb) < 2);
     if (isSeam) continue;
-    // Determine edge mode: first half uses halfEdgeModes, mirror half mirrors those
     const edgeIdx = i < hn ? i : i - hn;
     const edgeMode = state.halfEdgeModes[edgeIdx] ?? 'block';
     const isSink = edgeMode === 'sink';
-    const midY = (a.y + b.y) / 2;
-    const baseCol = isSink ? '#ff6600' : (midY < CY ? '#00ffee' : '#ff00cc');
+    const baseCol = isSink
+      ? '#ff6600'
+      : (state.levelType === 'course' ? '#00ffee' : ((a.y + b.y) / 2 < CY ? '#00ffee' : '#ff00cc'));
     ctx.strokeStyle = baseCol + '26'; ctx.lineWidth = 6;
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
     ctx.strokeStyle = baseCol; ctx.lineWidth = 2;
-    if (isSink) { ctx.setLineDash([6, 4]); }
+    if (isSink) ctx.setLineDash([6, 4]);
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -392,10 +415,13 @@ function orderedSeams(): [[Vec2,Vec2], [Vec2,Vec2]] | null {
 }
 
 function drawGoals() {
-  const seams = orderedSeams();
-  if (!seams) return;
-  const [topSeam, botSeam] = seams;
-  for (const [seam, scorer] of [[topSeam, 0], [botSeam, 1]] as [[Vec2,Vec2], 0|1][]) {
+  const goalSeam = activeGoalSeam();
+  if (!goalSeam) return;
+  const fieldSeams = state.levelType === 'field' ? orderedSeams() : null;
+  const goalSeams: [[Vec2,Vec2], 0|1][] = state.levelType === 'course'
+    ? [[goalSeam, 0]]
+    : fieldSeams ? [[fieldSeams[0], 0], [fieldSeams[1], 1]] : [];
+  for (const [seam, scorer] of goalSeams) {
     const g = computeGoal(seam, scorer);
     const col = scorer === 0 ? '#00ffee' : '#ff00cc';
     ctx.strokeStyle = col; ctx.lineWidth = 3;
@@ -405,7 +431,7 @@ function drawGoals() {
     ctx.beginPath(); ctx.moveTo(g.leftTip.x, g.leftTip.y); ctx.lineTo(g.rightTip.x, g.rightTip.y); ctx.stroke();
   }
   if (!exportMode) {
-    const goalCentre = lerp2(seams[0][0], seams[0][1], state.goal.t);
+    const goalCentre = lerp2(goalSeam[0], goalSeam[1], state.goal.t);
     ctx.strokeStyle = '#ffcc00'; ctx.fillStyle = '#ffcc0033'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(goalCentre.x, goalCentre.y, 9, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   }
@@ -415,7 +441,8 @@ function drawEllipses(showBg = false) {
   for (let ei = 0; ei < state.ellipses.length; ei++) {
     const e = state.ellipses[ei];
     const isSel = state.selectedEllipseIdx === ei;
-    // Draw mirror
+    // Draw mirror (field levels only)
+    if (state.levelType === 'field') {
     const mx = 2 * CX - e.x, my = 2 * CY - e.y;
     ctx.save();
     ctx.translate(mx, my);
@@ -437,6 +464,7 @@ function drawEllipses(showBg = false) {
       ctx.setLineDash([]);
     }
     ctx.restore();
+    } // end field-only mirror
     // Draw original
     const selActive = isSel && !exportMode;
     ctx.save();
@@ -573,9 +601,9 @@ function polyPath(pts: Vec2[]) {
 // ─── Hit testing ──────────────────────────────────────────────────────────────
 
 function hitTest(p: Vec2): DragTarget | null {
-  const seams = orderedSeams();
-  if (seams) {
-    const gc = lerp2(seams[0][0], seams[0][1], state.goal.t);
+  const goalSeam = activeGoalSeam();
+  if (goalSeam) {
+    const gc = lerp2(goalSeam[0], goalSeam[1], state.goal.t);
     if (dist2(p, gc) < HANDLE_R + 4) return { type: 'goal', polyIdx: 0, vertIdx: 0 };
   }
   for (let i = 0; i < state.halfVerts.length; i++) {
@@ -685,8 +713,8 @@ canvas.addEventListener('mousemove', (e) => {
     state.ellipses[polyIdx].y = snapped.y;
     save();
   } else if (type === 'goal') {
-    const seams = orderedSeams();
-    if (seams) { state.goal.t = projectOnSegment(p, seams[0][0], seams[0][1]); updateGoalUI(); save(); }
+    const gs = activeGoalSeam();
+    if (gs) { state.goal.t = projectOnSegment(p, gs[0], gs[1]); updateGoalUI(); save(); }
   }
   draw();
 });
@@ -918,6 +946,16 @@ function updateEllipseFromUI() {
 (document.getElementById('levelName') as HTMLInputElement)
   .addEventListener('input', (e) => { state.levelName = (e.target as HTMLInputElement).value; save(); });
 
+(document.getElementById('levelType') as HTMLSelectElement)
+  .addEventListener('change', (e) => {
+    state.levelType = (e.target as HTMLSelectElement).value as 'field' | 'course';
+    (document.getElementById('parSection') as HTMLElement).style.display = state.levelType === 'course' ? '' : 'none';
+    save();
+  });
+
+(document.getElementById('levelPar') as HTMLInputElement)
+  .addEventListener('input', (e) => { state.par = parseInt((e.target as HTMLInputElement).value) || 5; save(); });
+
 (document.getElementById('levelTagline') as HTMLTextAreaElement)
   .addEventListener('input', (e) => { state.tagline = (e.target as HTMLTextAreaElement).value; save(); });
 
@@ -1007,10 +1045,12 @@ function v2s(v: Vec2): string {
 }
 
 function exportTS(): string {
-  const boundary = fullBoundary();
-  if (boundary.length < 4) return '// Need at least 2 half-verts to export.';
-  const seams = orderedSeams()!;
-  const g1 = computeGoal(seams[0], 0), g2 = computeGoal(seams[1], 1);
+  const isCourse = state.levelType === 'course';
+  const boundary = isCourse ? [...state.halfVerts] : fullBoundary();
+  if (boundary.length < 3) return '// Need at least 3 boundary verts to export.';
+  const gs = activeGoalSeam()!;
+  const g1 = computeGoal(gs, 0);
+  const g2 = isCourse ? g1 : computeGoal(orderedSeams()![1], 1);
   const [sa, sb, sc] = getStart();
   const name  = state.levelName || 'My Field';
   const id    = toSlug(name);
@@ -1035,20 +1075,15 @@ function exportTS(): string {
     return `    { x: ${Math.round(e.x)}, y: ${Math.round(e.y)}, rx: ${Math.round(e.rx)}, ry: ${Math.round(e.ry)}, angle: ${e.angle.toFixed(4)}${modeStr} },`;
   }).join('\n');
 
-  return `import { LevelDef } from '../LevelDef';
-
-export const ${ident}: LevelDef = {
-  id: '${id}',
-  label: '${name}',
-  type: 'field',${state.imageUrl ? `\n  imageUrl: '${state.imageUrl}',` : ''}${state.tagline ? `\n  tagline: ${JSON.stringify(state.tagline)},` : ''}
-  look: '${state.look}',
-  coinConfig: { radius: ${state.coinRadius}, kickPower: ${state.coinKickPower.toFixed(1)}, drag: ${state.coinDrag.toFixed(1)} },
-  boundary: [
-${bLines}
-  ],
-  polys: [${blLines ? '\n' + blLines + '\n  ' : ''}],
-  ellipses: [${elLines ? '\n' + elLines + '\n  ' : ''}],
-  goals: [
+  const goalsBlock = isCourse
+    ? `  goals: [
+    {
+      leftBase:  ${v2s(g1.leftBase)},  rightBase: ${v2s(g1.rightBase)},
+      leftTip:   ${v2s(g1.leftTip)},   rightTip:  ${v2s(g1.rightTip)},
+      scorer: 0,
+    },
+  ],`
+    : `  goals: [
     {
       leftBase:  ${v2s(g1.leftBase)},  rightBase: ${v2s(g1.rightBase)},
       leftTip:   ${v2s(g1.leftTip)},   rightTip:  ${v2s(g1.rightTip)},
@@ -1059,7 +1094,22 @@ ${bLines}
       leftTip:   ${v2s(g2.leftTip)},   rightTip:  ${v2s(g2.rightTip)},
       scorer: 1,
     },
+  ],`;
+
+  return `import { LevelDef } from '../LevelDef';
+
+export const ${ident}: LevelDef = {
+  id: '${id}',
+  label: '${name}',
+  type: '${state.levelType}',${isCourse ? `\n  par: ${state.par},` : ''}${state.imageUrl ? `\n  imageUrl: '${state.imageUrl}',` : ''}${state.tagline ? `\n  tagline: ${JSON.stringify(state.tagline)},` : ''}
+  look: '${state.look}',
+  coinConfig: { radius: ${state.coinRadius}, kickPower: ${state.coinKickPower.toFixed(1)}, drag: ${state.coinDrag.toFixed(1)} },
+  boundary: [
+${bLines}
   ],
+  polys: [${blLines ? '\n' + blLines + '\n  ' : ''}],
+  ellipses: [${elLines ? '\n' + elLines + '\n  ' : ''}],
+${goalsBlock}
   start: [
     ${v2s(sa)},
     ${v2s(sb)},
@@ -1120,6 +1170,8 @@ function editorStateForSave() {
     ellipses: state.ellipses,
     start: state.start,
     levelName: state.levelName,
+    levelType: state.levelType,
+    par: state.par,
     tagline: state.tagline,
     imageUrl: state.imageUrl,
     look: state.look,
@@ -1141,6 +1193,8 @@ function applyState(s: ReturnType<typeof editorStateForSave>) {
   }
   state.start      = s.start      ?? null;
   state.levelName  = s.levelName  ?? 'My Field';
+  state.levelType  = (s as any).levelType  ?? 'field';
+  state.par        = (s as any).par        ?? 5;
   state.tagline    = (s as any).tagline    ?? '';
   state.selectedPolyIdx = null;
   state.ellipses     = (s as any).ellipses     ?? [];
@@ -1152,6 +1206,9 @@ function applyState(s: ReturnType<typeof editorStateForSave>) {
   state.selectedEllipseIdx = null;
   state.activePoly = null;
   (document.getElementById('levelName') as HTMLInputElement).value = state.levelName;
+  (document.getElementById('levelType') as HTMLSelectElement).value = state.levelType;
+  (document.getElementById('levelPar') as HTMLInputElement).value = String(state.par);
+  (document.getElementById('parSection') as HTMLElement).style.display = state.levelType === 'course' ? '' : 'none';
   (document.getElementById('levelTagline') as HTMLTextAreaElement).value = state.tagline;
   (document.getElementById('levelLook') as HTMLSelectElement).value = state.look;
   updateGoalUI();
