@@ -83,6 +83,8 @@ export interface LevelDef {
   start: [Vec2, Vec2, Vec2];
   /** Optional field image replacing procedural rendering (relative URL, e.g. /field-images/stadium.png) */
   imageUrl?: string;
+  /** Short flavour text shown on the menu preview card */
+  tagline?: string;
   /** Coin physics — overrides menu settings on load */
   coinConfig?: CoinConfig;
   /** Visual theme */

@@ -5,6 +5,7 @@ export const pathwaysLevel: LevelDef = {
   label: 'Pathways',
   type: 'field',
   imageUrl: '/field-images/pathways.png',
+  tagline: 'Narrow corridors, blind corners. Every kick needs a plan.',
   look: 'neon',
   coinConfig: { radius: 8, kickPower: 1.0, drag: 4.2 },
   boundary: [

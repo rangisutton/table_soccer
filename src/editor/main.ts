@@ -68,6 +68,7 @@ const state = {
   drag: null as DragTarget | null,
   snapGrid: true,
   levelName: 'My Field',
+  tagline: '',
   imageUrl: null as string | null,
   look: 'neon' as string,
   coinRadius: 10,
@@ -917,6 +918,9 @@ function updateEllipseFromUI() {
 (document.getElementById('levelName') as HTMLInputElement)
   .addEventListener('input', (e) => { state.levelName = (e.target as HTMLInputElement).value; save(); });
 
+(document.getElementById('levelTagline') as HTMLTextAreaElement)
+  .addEventListener('input', (e) => { state.tagline = (e.target as HTMLTextAreaElement).value; save(); });
+
 document.getElementById('btnClear')!.addEventListener('click', () => {
   if (!confirm('Clear everything?')) return;
   state.halfVerts = []; state.halfEdgeModes = []; state.polys = []; state.activePoly = null;
@@ -1036,7 +1040,7 @@ function exportTS(): string {
 export const ${ident}: LevelDef = {
   id: '${id}',
   label: '${name}',
-  type: 'field',${state.imageUrl ? `\n  imageUrl: '${state.imageUrl}',` : ''}
+  type: 'field',${state.imageUrl ? `\n  imageUrl: '${state.imageUrl}',` : ''}${state.tagline ? `\n  tagline: ${JSON.stringify(state.tagline)},` : ''}
   look: '${state.look}',
   coinConfig: { radius: ${state.coinRadius}, kickPower: ${state.coinKickPower.toFixed(1)}, drag: ${state.coinDrag.toFixed(1)} },
   boundary: [
@@ -1116,6 +1120,7 @@ function editorStateForSave() {
     ellipses: state.ellipses,
     start: state.start,
     levelName: state.levelName,
+    tagline: state.tagline,
     imageUrl: state.imageUrl,
     look: state.look,
     coinRadius: state.coinRadius,
@@ -1136,6 +1141,7 @@ function applyState(s: ReturnType<typeof editorStateForSave>) {
   }
   state.start      = s.start      ?? null;
   state.levelName  = s.levelName  ?? 'My Field';
+  state.tagline    = (s as any).tagline    ?? '';
   state.selectedPolyIdx = null;
   state.ellipses     = (s as any).ellipses     ?? [];
   state.imageUrl     = (s as any).imageUrl     ?? null;
@@ -1146,6 +1152,7 @@ function applyState(s: ReturnType<typeof editorStateForSave>) {
   state.selectedEllipseIdx = null;
   state.activePoly = null;
   (document.getElementById('levelName') as HTMLInputElement).value = state.levelName;
+  (document.getElementById('levelTagline') as HTMLTextAreaElement).value = state.tagline;
   (document.getElementById('levelLook') as HTMLSelectElement).value = state.look;
   updateGoalUI();
   updateDeletePolyBtn();

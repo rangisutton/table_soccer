@@ -5,6 +5,7 @@ export const tableLevel: LevelDef = {
   label: 'Table',
   type: 'field',
   imageUrl: '/field-images/table.png',
+  tagline: 'Living room rules. Mind the cups.',
   look: 'ambient',
   coinConfig: { radius: 8, kickPower: 0.8, drag: 7.8 },
   boundary: [

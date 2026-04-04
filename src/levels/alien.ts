@@ -5,6 +5,7 @@ export const alienLevel: LevelDef = {
   label: 'Alien',
   type: 'field',
   imageUrl: '/field-images/alien.png',
+  tagline: 'A classic hexagonal pitch. Clean lines, no excuses.',
   look: 'neon',
   coinConfig: { radius: 10, kickPower: 1.0, drag: 5.0 },
   boundary: [

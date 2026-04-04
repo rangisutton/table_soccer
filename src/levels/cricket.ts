@@ -5,6 +5,7 @@ export const cricketLevel: LevelDef = {
   label: 'Cricket',
   type: 'field',
   imageUrl: '/field-images/cricket.png',
+  tagline: "Howzatt! If you think the coin toss is the most exciting part, you'll love this.",
   look: 'ambient',
   coinConfig: { radius: 7, kickPower: 1.0, drag: 4.5 },
   boundary: [

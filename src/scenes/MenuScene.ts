@@ -26,6 +26,12 @@ export class MenuScene extends Phaser.Scene {
   private selectedLevel!: LevelDef;
   private levelBtns: { level: LevelDef; bg: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text }[] = [];
 
+  // ─── Preview card ───────────────────────────────────────────────────────────
+  private previewEl: HTMLDivElement | null = null;
+  private previewImg: HTMLImageElement | null = null;
+  private previewTitle: HTMLDivElement | null = null;
+  private previewTagline: HTMLDivElement | null = null;
+
   // ─── Lobby state ────────────────────────────────────────────────────────────
   private lobbyEl: HTMLDivElement | null = null;
   private lobbyState: LobbyState = 'name-entry';
@@ -150,12 +156,16 @@ export class MenuScene extends Phaser.Scene {
       fontSize: '11px', fontFamily: 'monospace', color: '#334455', align: 'center',
     }).setOrigin(0.5, 0.5);
 
+    this.createPreviewCard();
     this.highlightSelected();
+    this.updatePreview();
 
     // Clean up on scene shutdown
     this.events.on('shutdown', () => {
       this.lobbyEl?.remove();
       this.lobbyEl = null;
+      this.previewEl?.remove();
+      this.previewEl = null;
       this.unregisterNetHandlers();
     });
   }
@@ -528,6 +538,7 @@ export class MenuScene extends Phaser.Scene {
       bg.on('pointerup', () => {
         this.selectedLevel = level;
         this.highlightSelected();
+        this.updatePreview();
       });
 
       this.levelBtns.push({ level, bg, label: lbl });
@@ -535,6 +546,74 @@ export class MenuScene extends Phaser.Scene {
 
     const rows = Math.ceil(levels.length / cols);
     return y + rows * (btnH + 8);
+  }
+
+  private createPreviewCard() {
+    const canvas = this.game.canvas;
+    const rect = canvas.getBoundingClientRect();
+
+    const el = document.createElement('div');
+    this.previewEl = el;
+    Object.assign(el.style, {
+      position: 'fixed',
+      left:   `${rect.left + rect.width * 0.5 - 140}px`,
+      top:    `${rect.top  + rect.height * 0.54}px`,
+      width:  '280px',
+      background: '#05051e',
+      border: '1px solid #224455',
+      fontFamily: 'monospace',
+      pointerEvents: 'none',
+      zIndex: '10',
+    });
+
+    const title = document.createElement('div');
+    this.previewTitle = title;
+    Object.assign(title.style, {
+      color: '#00ffee',
+      fontSize: '13px',
+      letterSpacing: '3px',
+      textTransform: 'uppercase',
+      textAlign: 'center',
+      padding: '10px 12px 6px',
+    });
+    el.appendChild(title);
+
+    const img = document.createElement('img');
+    this.previewImg = img;
+    Object.assign(img.style, {
+      display: 'block',
+      width: '100%',
+      aspectRatio: '1',
+      objectFit: 'cover',
+    });
+    el.appendChild(img);
+
+    const tagline = document.createElement('div');
+    this.previewTagline = tagline;
+    Object.assign(tagline.style, {
+      color: '#556677',
+      fontSize: '11px',
+      lineHeight: '1.6',
+      padding: '8px 12px 10px',
+      textAlign: 'center',
+    });
+    el.appendChild(tagline);
+
+    document.body.appendChild(el);
+  }
+
+  private updatePreview() {
+    if (!this.previewEl) return;
+    const level = this.selectedLevel;
+    const BASE = import.meta.env.BASE_URL ?? '/';
+    const menuUrl = `${BASE}field-images/menus/${level.id}_menu.jpg`;
+
+    this.previewTitle!.textContent = level.label;
+    this.previewImg!.src = menuUrl;
+    this.previewImg!.style.display = 'block';
+    // Hide image gracefully if no menu image exists for this level
+    this.previewImg!.onerror = () => { this.previewImg!.style.display = 'none'; };
+    this.previewTagline!.textContent = level.tagline ?? '';
   }
 
   private highlightSelected() {
