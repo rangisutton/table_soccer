@@ -846,15 +846,22 @@ export class GameScene extends Phaser.Scene {
           if (data.frame < GameScene.SINK_FADE_FRAMES) allDone = false;
         }
         if (allDone) {
-          // Snap sinking coins to respawn positions before foul resets everything
-          for (const [ci, data] of this.sinkingCoins) {
-            this.coins[ci].setTranslation({ x: data.respawnX, y: data.respawnY }, true);
+          // Hide coins off-canvas while we wait, then respawn after 0.5s
+          for (const [ci] of this.sinkingCoins) {
+            this.coins[ci].setTranslation({ x: -2000, y: -2000 }, true);
             this.coins[ci].setLinvel({ x: 0, y: 0 }, true);
           }
+          const saved = new Map(this.sinkingCoins);
           this.sinkingCoins.clear();
-          if (this.netMode) this.sendSync('foul');
-          this.onFoul();
-          this.draw();
+          this.time.delayedCall(500, () => {
+            for (const [ci, data] of saved) {
+              this.coins[ci].setTranslation({ x: data.respawnX, y: data.respawnY }, true);
+              this.coins[ci].setLinvel({ x: 0, y: 0 }, true);
+            }
+            if (this.netMode) this.sendSync('foul');
+            this.onFoul();
+            this.draw();
+          });
           return;
         }
       }
@@ -1123,10 +1130,36 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private triggerSink(ci: number, respawnX: number, respawnY: number) {
+  private triggerSink(ci: number, contactX: number, contactY: number) {
     if (this.resultHandled || this.sinkingCoins.has(ci)) return;
     this.resultHandled = true;
+    const { x: respawnX, y: respawnY } = this.calcSinkRespawn(ci, contactX, contactY);
     this.sinkingCoins.set(ci, { respawnX, respawnY, frame: 0 });
+  }
+
+  /** Walk backwards along reversed velocity from the contact point until clear of all sinks, +10px margin. */
+  private calcSinkRespawn(ci: number, contactX: number, contactY: number): { x: number; y: number } {
+    const v = this.coins[ci].linvel();
+    const spd = Math.hypot(v.x, v.y);
+    if (spd < 0.1) return { x: contactX, y: contactY };
+    const dx = -v.x / spd;
+    const dy = -v.y / spd;
+    const STEP = 2;
+    const MARGIN = 10;
+    const r = this.cfg.coinRadius;
+    const ball = new RAPIER.Ball(r);
+    let x = contactX, y = contactY;
+    for (let i = 0; i < 300; i++) {
+      x += dx * STEP;
+      y += dy * STEP;
+      const hit = this.rapierWorld.intersectionWithShape(
+        { x, y }, 0, ball,
+        undefined, undefined, undefined, undefined,
+        (col) => this.colliderLabels.get(col.handle) === 'sink',
+      );
+      if (!hit) break;
+    }
+    return { x: x + dx * MARGIN, y: y + dy * MARGIN };
   }
 
   private emitCollisionFX(wx: number, wy: number, spd: number, source: 'coin' | 'wall') {
