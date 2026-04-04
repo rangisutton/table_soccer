@@ -94,7 +94,13 @@ export class MenuScene extends Phaser.Scene {
       y += 12;
     }
 
-    y += 24; // extra space below levels
+    y += 16; // gap below level buttons
+
+    // ── Level preview card (DOM, positioned over this canvas gap) ─────────────
+    this.createPreviewCard(y);
+    y += 218; // reserve canvas height for the card
+
+    y += 16; // gap above play button
 
     // ── Play button ──────────────────────────────────────────────────────────
     const pairedNow = net.connected && !!net.partner;
@@ -156,7 +162,6 @@ export class MenuScene extends Phaser.Scene {
       fontSize: '11px', fontFamily: 'monospace', color: '#334455', align: 'center',
     }).setOrigin(0.5, 0.5);
 
-    this.createPreviewCard();
     this.highlightSelected();
     this.updatePreview();
 
@@ -548,17 +553,21 @@ export class MenuScene extends Phaser.Scene {
     return y + rows * (btnH + 8);
   }
 
-  private createPreviewCard() {
+  private createPreviewCard(canvasY: number) {
     const canvas = this.game.canvas;
     const rect = canvas.getBoundingClientRect();
+    const scaleX = rect.width  / CANVAS_WIDTH;
+    const scaleY = rect.height / CANVAS_HEIGHT;
+    // Card is 280px wide in screen px, centered on canvas
+    const cardW = 280;
 
     const el = document.createElement('div');
     this.previewEl = el;
     Object.assign(el.style, {
       position: 'fixed',
-      left:   `${rect.left + rect.width * 0.5 - 140}px`,
-      top:    `${rect.top  + rect.height * 0.54}px`,
-      width:  '280px',
+      left:   `${rect.left + rect.width * 0.5 - cardW / 2}px`,
+      top:    `${rect.top  + canvasY * scaleY}px`,
+      width:  `${cardW}px`,
       background: '#05051e',
       border: '1px solid #224455',
       fontFamily: 'monospace',
