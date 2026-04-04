@@ -624,11 +624,12 @@ export class GameScene extends Phaser.Scene {
     const body = this.rapierWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     const hull = RAPIER.ColliderDesc.convexHull(pts);
     if (!hull) return;
-    const col = this.rapierWorld.createCollider(
-      hull.setRestitution(isSink ? 0.0 : 1.0).setFriction(0.0)
-        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
-      body,
-    );
+    const desc = isSink
+      ? hull.setSensor(true).setFriction(0.0)
+          .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS)
+      : hull.setRestitution(1.0).setFriction(0.0)
+          .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+    const col = this.rapierWorld.createCollider(desc, body);
     this.colliderLabels.set(col.handle, isSink ? 'sink' : 'wall');
   }
 
@@ -663,12 +664,15 @@ export class GameScene extends Phaser.Scene {
     const body = this.rapierWorld.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(cx, cy).setRotation(angle),
     );
-    const col = this.rapierWorld.createCollider(
-      RAPIER.ColliderDesc.cuboid((len + t) / 2, t / 2)
-        .setRestitution(restitution).setFriction(0.0)
-        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
-      body,
-    );
+    const isSink = label === 'sink';
+    const desc = isSink
+      ? RAPIER.ColliderDesc.cuboid((len + t) / 2, t / 2)
+          .setSensor(true).setFriction(0.0)
+          .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS)
+      : RAPIER.ColliderDesc.cuboid((len + t) / 2, t / 2)
+          .setRestitution(restitution).setFriction(0.0)
+          .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+    const col = this.rapierWorld.createCollider(desc, body);
     this.colliderLabels.set(col.handle, label);
   }
 
