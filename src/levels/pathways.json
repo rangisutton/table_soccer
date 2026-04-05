@@ -96,5 +96,6 @@
   "look": "neon",
   "coinRadius": 8,
   "coinKickPower": 1,
-  "coinDrag": 4.2
+  "coinDrag": 4.2,
+  "tagline": "Will you kick around following the flooded fortress walls, or duck through narrow gaps and across the square?"
 }

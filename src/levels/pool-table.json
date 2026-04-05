@@ -100,5 +100,6 @@
   "look": "ambient",
   "coinRadius": 12,
   "coinKickPower": 1.2,
-  "coinDrag": 0.9
+  "coinDrag": 0.9,
+  "tagline": "The pool balls don't move or anything. Fun bouncing them around but will be buggy like air-hockey, missing goals and faulting."
 }

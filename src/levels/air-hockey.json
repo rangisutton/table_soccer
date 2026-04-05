@@ -50,7 +50,7 @@
   "levelName": "Air Hockey",
   "levelType": "field",
   "par": 5,
-  "tagline": "",
+  "tagline": "Like the real game the coins bounce around all over the place until you smack an own goal. Physics bug out on this fast level.",
   "imageUrl": "/field-images/air-hockey.png",
   "look": "neon",
   "coinRadius": 15,

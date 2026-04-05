@@ -5,7 +5,7 @@ export const poolTableLevel: LevelDef = {
   label: 'Pool Table',
   type: 'field',
   imageUrl: '/field-images/pool-table.png',
-  tagline: 'The cushions here have opinions. Angles matter.',
+  tagline: "The pool balls don't move or anything. Fun bouncing them around but will be buggy like air-hockey, missing goals and faulting.",
   look: 'ambient',
   coinConfig: { radius: 12, kickPower: 1.2, drag: 0.9 },
   boundary: [

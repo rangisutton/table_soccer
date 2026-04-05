@@ -5,7 +5,7 @@ export const swissLevel: LevelDef = {
   label: 'Swiss',
   type: 'field',
   imageUrl: '/field-images/swiss.png',
-  tagline: 'Full of holes — literally. Bouncy walls, unpredictable ricochets.',
+  tagline: "Couldn't really make this game without this level. So here it is. The holes are bouncy so have fun but don't go off the edge.",
   look: 'neon',
   coinConfig: { radius: 10, kickPower: 1.0, drag: 5.0 },
   boundary: [

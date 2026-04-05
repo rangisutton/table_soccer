@@ -5,7 +5,7 @@ export const zedLevel: LevelDef = {
   label: 'Zed',
   type: 'field',
   imageUrl: '/field-images/zed.png',
-  tagline: 'A Z-shaped pitch that splits the field in two. Pick your route.',
+  tagline: "A Zed. It's backwards. Theres lots of predictable surfaces to trick shot with, and waxed up coins to slide the way home.",
   look: 'neon',
   coinConfig: { radius: 7, kickPower: 1.0, drag: 4.2 },
   boundary: [

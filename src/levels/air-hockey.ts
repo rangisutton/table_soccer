@@ -5,6 +5,7 @@ export const airHockeyLevel: LevelDef = {
   label: 'Air Hockey',
   type: 'field',
   imageUrl: '/field-images/air-hockey.png',
+  tagline: "Like the real game the coins bounce around all over the place until you smack an own goal. Physics bug out on this fast level.",
   look: 'neon',
   coinConfig: { radius: 15, kickPower: 2.0, drag: 0.9 },
   boundary: [

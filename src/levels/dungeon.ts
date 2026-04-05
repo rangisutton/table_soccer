@@ -6,7 +6,7 @@ export const dungeonLevel: LevelDef = {
   type: 'course',
   par: 500,
   imageUrl: '/field-images/dungeon.png',
-  tagline: "This is a course of some sort",
+  tagline: "This one is sort of dungeons and dragons-ey stuff as a solo course par 15. The monsters are bad. Gold is good. Pretend you're a wood elf evil bard.",
   look: 'neon',
   coinConfig: { radius: 7, kickPower: 1.0, drag: 4.2 },
   boundary: [

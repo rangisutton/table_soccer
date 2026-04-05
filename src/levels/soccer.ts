@@ -5,7 +5,7 @@ export const soccerLevel: LevelDef = {
   label: 'Soccer',
   type: 'field',
   imageUrl: '/field-images/soccer.png',
-  tagline: 'The original. High drag, tight margins. Pure football.',
+  tagline: "Couldn't really make this game without this level. So here it is. Lots of players getting in the way.",
   look: 'ambient',
   coinConfig: { radius: 7, kickPower: 1.0, drag: 11.1 },
   boundary: [

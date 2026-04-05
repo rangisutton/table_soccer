@@ -151,5 +151,6 @@
   "look": "neon",
   "coinRadius": 10,
   "coinKickPower": 1,
-  "coinDrag": 5
+  "coinDrag": 5,
+  "tagline": "Couldn't really make this game without this level. So here it is. The holes are bouncy so have fun but don't go off the edge."
 }

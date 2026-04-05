@@ -108,5 +108,6 @@
   "look": "neon",
   "coinRadius": 7,
   "coinKickPower": 1,
-  "coinDrag": 4.2
+  "coinDrag": 4.2,
+  "tagline": "There is no uni-code character for a backwards zed, so this level is just being called normal Zed. This is the field with lots of predictable surfaces to trick shot with, and waxed up coins to slide the way home."
 }

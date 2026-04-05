@@ -4,9 +4,9 @@ export const spiralLevel: LevelDef = {
   id: 'spiral',
   label: 'Spiral',
   type: 'course',
-  par: 500,
+  par: 10,
   imageUrl: '/field-images/spiral.png',
-  tagline: "This is a course of some sort",
+  tagline: "Om Mani Padme Hum. Spiral outward to mindfulness. Breath deep and embrace with humble acceptance, you'll never reach the rose in par 10.",
   look: 'neon',
   coinConfig: { radius: 7, kickPower: 1.0, drag: 3.4 },
   boundary: [

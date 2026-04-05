@@ -111,5 +111,6 @@
   "look": "ambient",
   "coinRadius": 7,
   "coinKickPower": 1,
-  "coinDrag": 11.1
+  "coinDrag": 11.1,
+  "tagline": "Couldn't really make this game without this level. So here it is. Lots of players getting in the way."
 }

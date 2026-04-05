@@ -6,7 +6,7 @@ export const lighthouseLevel: LevelDef = {
   type: 'course',
   par: 500,
   imageUrl: '/field-images/lighthouse.png',
-  tagline: "This is a course of some sort",
+  tagline: "Navigate this ridiculously tight and treacherous harbour for par of 15. The rocks will kill you, the sand bars are a bit more forgiving.",
   look: 'neon',
   coinConfig: { radius: 10, kickPower: 1.0, drag: 5.0 },
   boundary: [
