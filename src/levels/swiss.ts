@@ -2,7 +2,7 @@ import { LevelDef } from '../LevelDef';
 
 export const swissLevel: LevelDef = {
   id: 'swiss',
-  label: 'swiss',
+  label: 'Swiss',
   type: 'field',
   imageUrl: '/field-images/swiss.png',
   tagline: 'Full of holes — literally. Bouncy walls, unpredictable ricochets.',
