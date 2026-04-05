@@ -10,6 +10,7 @@ import { LevelDef, EllipseDef, PolyDef, BoundaryPoint, LookDef, LOOKS } from '..
 import { alienLevel } from '../levels/alien';
 import { GameAudio } from '../Audio';
 import { net, ServerMsg } from '../net';
+import { showHelp } from '../help';
 
 interface Spark {
   x: number; y: number;     // world position
@@ -108,6 +109,8 @@ export class GameScene extends Phaser.Scene {
   private netPlayerIndex: 0 | 1 = 0;
   private pairRequestDialog: HTMLDivElement | null = null;
   private quitDialog: HTMLDivElement | null = null;
+  private inGameMenuBtn: HTMLElement | null = null;
+  private inGameHelpBtn: HTMLElement | null = null;
 
   private readonly handlePairRequestInGame = (msg: Extract<ServerMsg, { type: 'pair-request' }>) => {
     if (this.pairRequestDialog) return;
@@ -359,8 +362,44 @@ export class GameScene extends Phaser.Scene {
       color: '#ffffff', stroke: '#000022', strokeThickness: 10, align: 'center',
     }).setOrigin(0.5, 0.5).setAlpha(0).setDepth(55);
 
+    // In-game menu button (shield icon — acts as ESC)
+    const base = import.meta.env.BASE_URL ?? '/';
+    const menuBtn = document.createElement('div');
+    this.inGameMenuBtn = menuBtn;
+    Object.assign(menuBtn.style, {
+      position: 'fixed', top: '10px', left: '10px',
+      width: '36px', height: '36px', cursor: 'pointer', zIndex: '60',
+      opacity: '0.6',
+    });
+    const shieldImg = document.createElement('img');
+    shieldImg.src = `${base}brand/banner_small.png`;
+    Object.assign(shieldImg.style, { width: '100%', height: '100%', objectFit: 'contain' });
+    menuBtn.appendChild(shieldImg);
+    menuBtn.addEventListener('click', () => this.showQuitDialog());
+    menuBtn.addEventListener('mouseenter', () => { menuBtn.style.opacity = '1'; });
+    menuBtn.addEventListener('mouseleave', () => { menuBtn.style.opacity = '0.6'; });
+    document.body.appendChild(menuBtn);
+
+    // In-game help button
+    const helpBtn = document.createElement('div');
+    this.inGameHelpBtn = helpBtn;
+    Object.assign(helpBtn.style, {
+      position: 'fixed', top: '10px', right: '10px',
+      width: '32px', height: '32px', cursor: 'pointer', zIndex: '60',
+      background: 'transparent', border: '1px solid #00ffee44',
+      borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: 'monospace', fontSize: '16px', color: '#00ffee88',
+    });
+    helpBtn.textContent = '?';
+    helpBtn.addEventListener('click', () => showHelp());
+    helpBtn.addEventListener('mouseenter', () => { helpBtn.style.color = '#00ffee'; helpBtn.style.borderColor = '#00ffee'; });
+    helpBtn.addEventListener('mouseleave', () => { helpBtn.style.color = '#00ffee88'; helpBtn.style.borderColor = '#00ffee44'; });
+    document.body.appendChild(helpBtn);
+
     this.events.once('shutdown', () => {
       this.domTurnBar.remove();
+      this.inGameMenuBtn?.remove(); this.inGameMenuBtn = null;
+      this.inGameHelpBtn?.remove(); this.inGameHelpBtn = null;
       this.courseHudEl?.remove();
       this.courseHudEl = null;
       document.getElementById('panel-left')!.style.display  = 'none';

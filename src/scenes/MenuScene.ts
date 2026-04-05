@@ -4,10 +4,12 @@ import { GameConfig, DEFAULT_CONFIG } from '../FieldConfig';
 import { LevelDef } from '../LevelDef';
 import { fieldLevels, courseLevels } from '../levels/index';
 import { net, Player, ServerMsg } from '../net';
+import { showHelp } from '../help';
 
 const CX = CANVAS_WIDTH / 2;
 const CY = CANVAS_HEIGHT / 2;
 const C_DARK = 0x030320;
+const BASE = import.meta.env.BASE_URL ?? '/';
 
 // ─── Lobby state ──────────────────────────────────────────────────────────────
 
@@ -15,9 +17,9 @@ type LobbyState =
   | 'name-entry'
   | 'connecting'
   | 'lobby'
-  | 'pending-out'   // we sent a pair request, waiting
-  | 'pending-in'    // we received a pair request
-  | 'paired';       // paired, pick level and start
+  | 'pending-out'
+  | 'pending-in'
+  | 'paired';
 
 export class MenuScene extends Phaser.Scene {
   private cfg!: GameConfig;
@@ -29,19 +31,13 @@ export class MenuScene extends Phaser.Scene {
   private levelBtns: { level: LevelDef; el: HTMLButtonElement }[] = [];
 
   // ─── Preview card ───────────────────────────────────────────────────────────
-  private previewEl: HTMLDivElement | null = null;
   private previewImg: HTMLImageElement | null = null;
   private previewTitle: HTMLDivElement | null = null;
   private previewTagline: HTMLDivElement | null = null;
+  private modeOverlayEl: HTMLDivElement | null = null;
 
-  // ─── Action buttons ─────────────────────────────────────────────────────────
-  private playBtnEl: HTMLButtonElement | null = null;
+  // ─── Online/lobby button (consolidated) ─────────────────────────────────────
   private onlineBtnEl: HTMLButtonElement | null = null;
-
-  // ─── vs display ─────────────────────────────────────────────────────────────
-  private vsMyEl: HTMLDivElement | null = null;
-  private vsLabelEl: HTMLDivElement | null = null;
-  private vsOpponentEl: HTMLDivElement | null = null;
 
   // ─── Lobby state ────────────────────────────────────────────────────────────
   private lobbyEl: HTMLDivElement | null = null;
@@ -65,20 +61,19 @@ export class MenuScene extends Phaser.Scene {
 
   create() {
     this.cfg = { ...(this.registry.get('gameConfig') ?? DEFAULT_CONFIG) };
-    this.allLevels = [...fieldLevels, ...courseLevels];
-    this.selectedLevel = this.registry.get('level') ?? this.allLevels[0];
+    this.allLevels = [...courseLevels, ...fieldLevels];
+    const defaultLevel = this.allLevels.find(l => l.id === 'lighthouse') ?? this.allLevels[0];
+    this.selectedLevel = this.registry.get('level') ?? defaultLevel;
     this.levelBtns = [];
 
-    // Minimal Phaser background — the DOM overlay sits on top
     this.add.rectangle(CX, CY, CANVAS_WIDTH, CANVAS_HEIGHT, C_DARK);
 
     this.buildMenuDOM();
 
     if (net.connected) {
       this.registerNetHandlers();
-      this.updateVsDisplay();
     }
-
+    this.updateOnlineBtn();
     this.highlightSelected();
     this.updatePreview();
 
@@ -106,7 +101,7 @@ export class MenuScene extends Phaser.Scene {
       position: 'absolute', inset: '0',
       overflowX: 'hidden', overflowY: 'auto',
       display: 'flex', flexDirection: 'column', alignItems: 'center',
-      padding: '24px 16px 32px',
+      padding: '16px 16px 32px',
       boxSizing: 'border-box',
       background: '#030320',
       fontFamily: 'monospace',
@@ -114,97 +109,39 @@ export class MenuScene extends Phaser.Scene {
     });
     parent.appendChild(wrap);
 
-    // ── Title ─────────────────────────────────────────────────────────────────
-    const titleEl = document.createElement('div');
-    Object.assign(titleEl.style, {
-      color: '#00ffee', fontSize: '34px', fontWeight: 'bold',
-      letterSpacing: '4px', textShadow: '0 0 20px #00ffee44',
-      marginBottom: '20px', textAlign: 'center',
+    // ── Banner graphic ────────────────────────────────────────────────────────
+    const banner = document.createElement('img');
+    banner.src = `${BASE}brand/full_shield.png`;
+    Object.assign(banner.style, {
+      display: 'block', width: 'auto', maxWidth: '480px', maxHeight: '220px',
+      objectFit: 'contain', marginBottom: '16px', cursor: 'pointer',
     });
-    titleEl.textContent = 'TABLE SOCCER';
-    wrap.appendChild(titleEl);
+    banner.title = 'How to play';
+    banner.addEventListener('click', () => showHelp());
+    wrap.appendChild(banner);
 
-    // ── Play + Online buttons ─────────────────────────────────────────────────
-    const actionRow = document.createElement('div');
-    Object.assign(actionRow.style, {
-      display: 'flex', gap: '20px', marginBottom: '10px',
-    });
-    wrap.appendChild(actionRow);
-
-    const pairedNow = net.connected && !!net.partner;
-
-    this.playBtnEl = document.createElement('button');
-    const pb = this.playBtnEl;
-    Object.assign(pb.style, {
-      background: 'transparent', border: '2px solid #ffcc00',
-      color: '#ffcc00', fontFamily: 'monospace',
-      fontSize: pairedNow ? '16px' : '28px', fontWeight: 'bold',
-      padding: '10px 24px', cursor: 'pointer',
-      minWidth: '120px', minHeight: '52px', lineHeight: '1.2',
-    });
-    pb.innerHTML = pairedNow ? 'PLAY<br>ONLINE' : 'PLAY';
-    pb.addEventListener('mouseover', () => { pb.style.background = 'rgba(255,204,0,0.15)'; pb.style.color = '#ffffff'; });
-    pb.addEventListener('mouseout',  () => { pb.style.background = 'transparent';            pb.style.color = '#ffcc00'; });
-    pb.addEventListener('click', () => {
-      this.registry.set('gameConfig', { ...this.cfg });
-      this.registry.set('level', this.selectedLevel);
-      if (net.connected && net.partner) {
-        net.send({ type: 'select-level', levelId: this.selectedLevel.id });
-        this.registry.set('netMode', true);
-        this.registry.set('netPlayerIndex', 0);
-      } else {
-        this.registry.set('netMode', false);
-      }
-      this.scene.start('GameScene');
-    });
-    actionRow.appendChild(pb);
-
+    // ── Online / lobby consolidated button ────────────────────────────────────
     this.onlineBtnEl = document.createElement('button');
     const ob = this.onlineBtnEl;
     Object.assign(ob.style, {
-      background: 'transparent', border: '2px solid #00ffee',
+      background: 'transparent', border: '1px solid #00ffee',
       color: '#00ffee', fontFamily: 'monospace',
-      fontSize: '18px', fontWeight: 'bold',
-      padding: '10px 24px', cursor: 'pointer',
-      minWidth: '120px', minHeight: '52px',
+      fontSize: '13px', letterSpacing: '1px',
+      padding: '7px 20px', cursor: 'pointer',
+      width: '90%', maxWidth: '380px',
+      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+      marginBottom: '14px',
+      position: 'relative', zIndex: '2', flexShrink: '0',
     });
-    ob.textContent = net.connected ? 'LOBBY' : 'LOGIN';
-    ob.addEventListener('mouseover', () => { ob.style.background = 'rgba(0,255,238,0.15)'; ob.style.color = '#ffffff'; });
-    ob.addEventListener('mouseout',  () => { ob.style.background = 'transparent';           ob.style.color = '#00ffee'; });
+    ob.addEventListener('mouseover', () => { ob.style.background = 'rgba(0,255,238,0.12)'; ob.style.color = '#ffffff'; });
+    ob.addEventListener('mouseout',  () => { ob.style.background = 'transparent'; ob.style.color = '#00ffee'; });
     ob.addEventListener('click', () => this.openLobby());
-    actionRow.appendChild(ob);
-
-    // ── vs display (hidden until connected) ───────────────────────────────────
-    const vsWrap = document.createElement('div');
-    Object.assign(vsWrap.style, {
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
-      gap: '4px', marginBottom: '12px', minHeight: '0',
-    });
-    wrap.appendChild(vsWrap);
-
-    this.vsMyEl = document.createElement('div');
-    Object.assign(this.vsMyEl.style, {
-      color: '#00ffee', fontSize: '22px', display: 'none', textAlign: 'center',
-    });
-    vsWrap.appendChild(this.vsMyEl);
-
-    this.vsLabelEl = document.createElement('div');
-    Object.assign(this.vsLabelEl.style, {
-      color: '#334455', fontSize: '12px', letterSpacing: '4px', display: 'none',
-    });
-    this.vsLabelEl.textContent = 'vs';
-    vsWrap.appendChild(this.vsLabelEl);
-
-    this.vsOpponentEl = document.createElement('div');
-    Object.assign(this.vsOpponentEl.style, {
-      color: '#334455', fontSize: '22px', display: 'none', textAlign: 'center',
-    });
-    vsWrap.appendChild(this.vsOpponentEl);
+    wrap.appendChild(ob);
 
     // ── Preview card with arrow navigation ───────────────────────────────────
     const previewRow = document.createElement('div');
     Object.assign(previewRow.style, {
-      display: 'flex', alignItems: 'center', gap: '8px',
+      display: 'flex', alignItems: 'center', gap: '10px',
       marginBottom: '20px',
     });
     wrap.appendChild(previewRow);
@@ -227,32 +164,55 @@ export class MenuScene extends Phaser.Scene {
 
     previewRow.appendChild(makeArrow('◀', () => this.stepLevel(-1)));
 
+    // Card — 455px (364 * 1.25)
     const card = document.createElement('div');
-    this.previewEl = card;
     Object.assign(card.style, {
-      width: '280px', maxWidth: '80vw',
+      width: '569px', maxWidth: '80vw',
       background: '#05051e', border: '1px solid #224455',
-      pointerEvents: 'none', flexShrink: '0',
+      flexShrink: '0',
     });
 
     this.previewTitle = document.createElement('div');
     Object.assign(this.previewTitle.style, {
-      color: '#00ffee', fontSize: '13px', letterSpacing: '3px',
+      color: '#00ffee', fontSize: '14px', letterSpacing: '3px',
       textTransform: 'uppercase', textAlign: 'center',
       padding: '10px 12px 6px',
     });
     card.appendChild(this.previewTitle);
 
+    // Image wrapper — clickable (launches game)
+    const imgWrap = document.createElement('div');
+    Object.assign(imgWrap.style, {
+      position: 'relative', overflow: 'hidden', cursor: 'pointer',
+    });
+    imgWrap.addEventListener('click', () => this.launchGame());
+    imgWrap.addEventListener('mouseover', () => { imgWrap.style.opacity = '0.88'; });
+    imgWrap.addEventListener('mouseout',  () => { imgWrap.style.opacity = '1'; });
+
     this.previewImg = document.createElement('img');
     Object.assign(this.previewImg.style, {
       display: 'block', width: '100%', aspectRatio: '1', objectFit: 'cover',
     });
-    card.appendChild(this.previewImg);
+    imgWrap.appendChild(this.previewImg);
 
+    // Mode overlay text
+    this.modeOverlayEl = document.createElement('div');
+    Object.assign(this.modeOverlayEl.style, {
+      position: 'absolute', bottom: '0', left: '0', right: '0',
+      background: 'rgba(3,3,32,0.82)',
+      color: '#00ffee', fontSize: '11px', letterSpacing: '2px',
+      textTransform: 'uppercase', textAlign: 'center',
+      padding: '6px 8px', pointerEvents: 'none',
+    });
+    imgWrap.appendChild(this.modeOverlayEl);
+    card.appendChild(imgWrap);
+
+    // Tagline — fixed height to prevent layout jump
     this.previewTagline = document.createElement('div');
     Object.assign(this.previewTagline.style, {
-      color: '#556677', fontSize: '11px', lineHeight: '1.6',
+      color: '#00bbaa', fontSize: '13px', lineHeight: '1.6',
       padding: '8px 12px 10px', textAlign: 'center',
+      height: '64px', overflow: 'hidden', boxSizing: 'border-box',
     });
     card.appendChild(this.previewTagline);
     previewRow.appendChild(card);
@@ -260,26 +220,17 @@ export class MenuScene extends Phaser.Scene {
     previewRow.appendChild(makeArrow('▶', () => this.stepLevel(1)));
 
     // ── Level buttons ─────────────────────────────────────────────────────────
-    if (fieldLevels.length > 0) {
-      wrap.appendChild(this.makeSectionLabel('FIELDS'));
-      wrap.appendChild(this.buildLevelGrid(fieldLevels));
-      wrap.appendChild(this.makeSpacer(12));
-    }
-
     if (courseLevels.length > 0) {
       wrap.appendChild(this.makeSectionLabel('COURSES'));
       wrap.appendChild(this.buildLevelGrid(courseLevels));
       wrap.appendChild(this.makeSpacer(12));
     }
 
-    // ── Hint ─────────────────────────────────────────────────────────────────
-    const hint = document.createElement('div');
-    Object.assign(hint.style, {
-      color: '#334455', fontSize: '11px', textAlign: 'center',
-      maxWidth: '420px', lineHeight: '1.6', marginTop: '8px',
-    });
-    hint.textContent = 'Drag a coin to kick  •  Pass between the other two  •  First to 3 goals wins';
-    wrap.appendChild(hint);
+    if (fieldLevels.length > 0) {
+      wrap.appendChild(this.makeSectionLabel('FIELDS'));
+      wrap.appendChild(this.buildLevelGrid(fieldLevels));
+      wrap.appendChild(this.makeSpacer(12));
+    }
   }
 
   private makeSectionLabel(text: string): HTMLDivElement {
@@ -310,8 +261,8 @@ export class MenuScene extends Phaser.Scene {
       const btn = document.createElement('button');
       Object.assign(btn.style, {
         background: 'transparent', border: '1px solid #224455',
-        color: '#778899', fontFamily: 'monospace', fontSize: '13px',
-        padding: '9px 8px', cursor: 'pointer', textAlign: 'center',
+        color: '#00bbaa', fontFamily: 'monospace', fontSize: '15px',
+        padding: '5px 8px', cursor: 'pointer', textAlign: 'center',
       });
       btn.textContent = level.label;
       btn.addEventListener('mouseover', () => {
@@ -328,6 +279,21 @@ export class MenuScene extends Phaser.Scene {
     }
 
     return grid;
+  }
+
+  // ─── Launch game ──────────────────────────────────────────────────────────────
+
+  private launchGame() {
+    this.registry.set('gameConfig', { ...this.cfg });
+    this.registry.set('level', this.selectedLevel);
+    if (net.connected && net.partner) {
+      net.send({ type: 'select-level', levelId: this.selectedLevel.id });
+      this.registry.set('netMode', true);
+      this.registry.set('netPlayerIndex', 0);
+    } else {
+      this.registry.set('netMode', false);
+    }
+    this.scene.start('GameScene');
   }
 
   // ─── Lobby overlay ────────────────────────────────────────────────────────────
@@ -368,9 +334,17 @@ export class MenuScene extends Phaser.Scene {
     const panel = document.createElement('div');
     Object.assign(panel.style, {
       background: '#05051e', border: '1px solid #00ffee44',
-      padding: '32px', width: '360px', color: '#cdd',
+      padding: '28px 32px 32px', width: '360px', color: '#cdd',
     });
     this.lobbyEl.appendChild(panel);
+
+    // Shield graphic
+    const shield = document.createElement('img');
+    shield.src = `${BASE}brand/banner_small.png`;
+    Object.assign(shield.style, {
+      display: 'block', width: '64px', margin: '0 auto 20px',
+    });
+    panel.appendChild(shield);
 
     const h2 = (text: string) => {
       const el = document.createElement('div');
@@ -437,10 +411,7 @@ export class MenuScene extends Phaser.Scene {
         btn('DISCONNECT', '#445566', () => {
           net.disconnect();
           this.closeLobby();
-          if (this.onlineBtnEl) this.onlineBtnEl.textContent = 'LOGIN';
-          if (this.vsMyEl)       this.vsMyEl.style.display = 'none';
-          if (this.vsLabelEl)    this.vsLabelEl.style.display = 'none';
-          if (this.vsOpponentEl) this.vsOpponentEl.style.display = 'none';
+          this.updateOnlineBtn();
         });
         net.send({ type: 'list' });
         break;
@@ -475,15 +446,14 @@ export class MenuScene extends Phaser.Scene {
         h2('PAIRED');
         msg(`Online as: ${net.myName}`, '#667788');
         msg(`Paired with: ${net.partner}`, '#00ffee');
-        msg('Close this lobby and select a level to play.', '#445566');
+        msg('Close this lobby and click a level image to play.', '#445566');
         btn('BACK TO MENU', '#ffcc00', () => this.closeLobby());
         btn('UNPAIR', '#445566', () => {
           net.send({ type: 'unpair' });
           net.partner = null;
           this.lobbyState = 'lobby';
           this.renderLobby();
-          this.updateVsDisplay();
-          if (this.playBtnEl) { this.playBtnEl.textContent = 'PLAY'; this.playBtnEl.style.fontSize = '28px'; }
+          this.updateOnlineBtn();
         });
         break;
       }
@@ -500,7 +470,7 @@ export class MenuScene extends Phaser.Scene {
       .then(() => {
         this.lobbyState = 'lobby';
         this.renderLobby();
-        this.updateVsDisplay();
+        this.updateOnlineBtn();
       })
       .catch((err: Error) => {
         this.lobbyState = 'name-entry';
@@ -610,11 +580,7 @@ export class MenuScene extends Phaser.Scene {
     this.pendingPairFrom = null;
     this.lobbyState = 'paired';
     this.closeLobby();
-    this.updateVsDisplay();
-    if (this.playBtnEl) {
-      this.playBtnEl.innerHTML = 'PLAY<br>ONLINE';
-      this.playBtnEl.style.fontSize = '16px';
-    }
+    this.updateOnlineBtn();
   }
 
   private onPairRejected(msg: Extract<ServerMsg, { type: 'pair-rejected' }>) {
@@ -626,23 +592,18 @@ export class MenuScene extends Phaser.Scene {
   private onUnpairing(_msg: Extract<ServerMsg, { type: 'unpairing' }>) {
     this.lobbyState = 'lobby';
     if (this.lobbyEl) this.renderLobby('Partner unpairing.');
-    this.updateVsDisplay();
-    if (this.playBtnEl) { this.playBtnEl.textContent = 'PLAY'; this.playBtnEl.style.fontSize = '28px'; }
+    this.updateOnlineBtn();
   }
 
   private onPartnerDisconnected(_msg: Extract<ServerMsg, { type: 'partner-disconnected' }>) {
     if (!net.connected) {
       this.closeLobby();
-      if (this.onlineBtnEl)    this.onlineBtnEl.textContent = 'LOGIN';
-      if (this.vsMyEl)         this.vsMyEl.style.display = 'none';
-      if (this.vsLabelEl)      this.vsLabelEl.style.display = 'none';
-      if (this.vsOpponentEl)   this.vsOpponentEl.style.display = 'none';
+      this.updateOnlineBtn();
       return;
     }
     this.lobbyState = 'lobby';
     if (this.lobbyEl) this.renderLobby('Partner disconnected.');
-    this.updateVsDisplay();
-    if (this.playBtnEl) { this.playBtnEl.textContent = 'PLAY'; this.playBtnEl.style.fontSize = '28px'; }
+    this.updateOnlineBtn();
   }
 
   private onSelectLevel(msg: Extract<ServerMsg, { type: 'select-level' }>) {
@@ -651,18 +612,37 @@ export class MenuScene extends Phaser.Scene {
     if (level) this.launchNetworkGame(level, msg.startingPlayer);
   }
 
-  // ─── vs display ──────────────────────────────────────────────────────────────
+  // ─── Online button + mode overlay ────────────────────────────────────────────
 
-  private updateVsDisplay() {
-    if (!this.vsMyEl) return;
-    this.vsMyEl.textContent = net.myName ?? '';
-    this.vsMyEl.style.display = '';
-    this.vsLabelEl!.style.display = '';
-    const opponent = net.partner ?? '-----';
-    this.vsOpponentEl!.textContent = opponent;
-    this.vsOpponentEl!.style.color = net.partner ? '#ff00cc' : '#334455';
-    this.vsOpponentEl!.style.display = '';
-    if (this.onlineBtnEl) this.onlineBtnEl.textContent = 'LOBBY';
+  private updateOnlineBtn() {
+    if (!this.onlineBtnEl) return;
+    const ob = this.onlineBtnEl;
+    if (!net.connected) {
+      ob.textContent = 'LOGIN';
+      ob.style.borderColor = '#00ffee';
+      ob.style.color = '#00ffee';
+    } else if (!net.partner) {
+      ob.textContent = `${net.myName} — unpaired`;
+      ob.style.borderColor = '#00ffee';
+      ob.style.color = '#00ffee';
+    } else {
+      ob.textContent = `${net.myName} vs ${net.partner}`;
+      ob.style.borderColor = '#ffcc00';
+      ob.style.color = '#ffcc00';
+    }
+    this.updateModeOverlay();
+  }
+
+  private updateModeOverlay() {
+    if (!this.modeOverlayEl) return;
+    const isCourse = this.selectedLevel?.type === 'course';
+    if (isCourse) {
+      this.modeOverlayEl.textContent = 'Single Player';
+    } else if (net.connected && net.partner) {
+      this.modeOverlayEl.textContent = 'Two Player — online';
+    } else {
+      this.modeOverlayEl.textContent = 'Two Player — local';
+    }
   }
 
   // ─── Level grid ──────────────────────────────────────────────────────────────
@@ -676,16 +656,16 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private updatePreview() {
-    if (!this.previewEl) return;
+    if (!this.previewImg) return;
     const level = this.selectedLevel;
-    const BASE = import.meta.env.BASE_URL ?? '/';
     const menuUrl = `${BASE}field-images/menus/${level.id}_menu.jpg`;
 
     this.previewTitle!.textContent = level.label;
-    this.previewImg!.src = menuUrl;
-    this.previewImg!.style.display = 'block';
-    this.previewImg!.onerror = () => { this.previewImg!.style.display = 'none'; };
+    this.previewImg.src = menuUrl;
+    this.previewImg.style.display = 'block';
+    this.previewImg.onerror = () => { this.previewImg!.style.display = 'none'; };
     this.previewTagline!.textContent = level.tagline ?? '';
+    this.updateModeOverlay();
   }
 
   private highlightSelected() {
@@ -693,7 +673,7 @@ export class MenuScene extends Phaser.Scene {
       const active = this.selectedLevel === level;
       el.style.borderColor  = active ? '#ffcc00' : '#224455';
       el.style.borderWidth  = active ? '2px'     : '1px';
-      el.style.color        = active ? '#ffcc00' : '#778899';
+      el.style.color        = active ? '#ffcc00' : '#00bbaa';
       el.style.background   = active ? 'rgba(255,204,0,0.1)' : 'transparent';
     }
   }
