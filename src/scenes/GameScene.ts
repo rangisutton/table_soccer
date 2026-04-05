@@ -369,15 +369,12 @@ export class GameScene extends Phaser.Scene {
     Object.assign(menuBtn.style, {
       position: 'fixed', top: '10px', left: '10px',
       width: '36px', height: '36px', cursor: 'pointer', zIndex: '60',
-      opacity: '0.6',
     });
     const shieldImg = document.createElement('img');
     shieldImg.src = `${base}brand/banner_small.png`;
     Object.assign(shieldImg.style, { width: '100%', height: '100%', objectFit: 'contain' });
     menuBtn.appendChild(shieldImg);
     menuBtn.addEventListener('click', () => this.showQuitDialog());
-    menuBtn.addEventListener('mouseenter', () => { menuBtn.style.opacity = '1'; });
-    menuBtn.addEventListener('mouseleave', () => { menuBtn.style.opacity = '0.6'; });
     document.body.appendChild(menuBtn);
 
     // In-game help button

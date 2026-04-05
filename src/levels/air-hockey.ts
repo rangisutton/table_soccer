@@ -5,9 +5,8 @@ export const airHockeyLevel: LevelDef = {
   label: 'Air Hockey',
   type: 'field',
   imageUrl: '/field-images/air-hockey.png',
-  tagline: 'Fast, frantic, and way too easy to score on yourself. Watch the walls.',
   look: 'neon',
-  coinConfig: { radius: 8, kickPower: 2.0, drag: 2.0 },
+  coinConfig: { radius: 15, kickPower: 2.0, drag: 0.9 },
   boundary: [
     { x: 376, y: 42 },
     { x: 62, y: 42 },

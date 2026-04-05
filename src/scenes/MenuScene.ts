@@ -32,6 +32,7 @@ export class MenuScene extends Phaser.Scene {
 
   // ─── Preview card ───────────────────────────────────────────────────────────
   private previewImg: HTMLImageElement | null = null;
+  private previewFallback: HTMLDivElement | null = null;
   private previewTitle: HTMLDivElement | null = null;
   private previewTagline: HTMLDivElement | null = null;
   private modeOverlayEl: HTMLDivElement | null = null;
@@ -183,15 +184,28 @@ export class MenuScene extends Phaser.Scene {
     // Image wrapper — clickable (launches game)
     const imgWrap = document.createElement('div');
     Object.assign(imgWrap.style, {
-      position: 'relative', overflow: 'hidden', cursor: 'pointer',
+      position: 'relative', overflow: 'hidden', cursor: 'pointer', aspectRatio: '1',
     });
     imgWrap.addEventListener('click', () => this.launchGame());
     imgWrap.addEventListener('mouseover', () => { imgWrap.style.opacity = '0.88'; });
     imgWrap.addEventListener('mouseout',  () => { imgWrap.style.opacity = '1'; });
 
+    // Fallback shown when no preview image exists
+    this.previewFallback = document.createElement('div');
+    Object.assign(this.previewFallback.style, {
+      position: 'absolute', inset: '0',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: '#05051e',
+      color: '#00ffee', fontFamily: 'monospace', fontSize: '32px',
+      letterSpacing: '8px', fontWeight: 'bold',
+    });
+    this.previewFallback.textContent = 'PLAY';
+    imgWrap.appendChild(this.previewFallback);
+
     this.previewImg = document.createElement('img');
     Object.assign(this.previewImg.style, {
-      display: 'block', width: '100%', aspectRatio: '1', objectFit: 'cover',
+      display: 'block', width: '100%', height: '100%', objectFit: 'cover',
+      position: 'absolute', inset: '0',
     });
     imgWrap.appendChild(this.previewImg);
 
@@ -661,9 +675,11 @@ export class MenuScene extends Phaser.Scene {
     const menuUrl = `${BASE}field-images/menus/${level.id}_menu.jpg`;
 
     this.previewTitle!.textContent = level.label;
-    this.previewImg.src = menuUrl;
+    this.previewFallback!.style.display = 'none';
     this.previewImg.style.display = 'block';
-    this.previewImg.onerror = () => { this.previewImg!.style.display = 'none'; };
+    this.previewImg.src = menuUrl;
+    this.previewImg.onload  = null;
+    this.previewImg.onerror = () => { this.previewImg!.style.display = 'none'; this.previewFallback!.style.display = 'flex'; };
     this.previewTagline!.textContent = level.tagline ?? '';
     this.updateModeOverlay();
   }
