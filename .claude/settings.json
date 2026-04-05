@@ -34,7 +34,9 @@
       "Bash(grep -n \"\\\\.blockers\\\\b\" u:/rs_dev/table_soccer/src/scenes/GameScene.ts u:/rs_dev/table_soccer/src/LevelDef.ts u:/rs_dev/table_soccer/src/levels/*.ts)",
       "Bash(grep -v \"//\")",
       "Bash(grep -v \"Binary\\\\|//\")",
-      "Bash(grep -l \"export const\" u:/rs_dev/table_soccer/src/levels/*.ts)"
+      "Bash(grep -l \"export const\" u:/rs_dev/table_soccer/src/levels/*.ts)",
+      "Bash(python3 -c ':*)",
+      "Bash(node -e ':*)"
     ]
   }
 }
