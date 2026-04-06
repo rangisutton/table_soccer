@@ -197,3 +197,13 @@ bash deploy.sh
 Builds with Vite → commits dist → `git subtree split --prefix dist` to gh-pages branch → force pushes → cleans dist from master → pushes master.
 
 Live: https://rangisutton.github.io/table_soccer/
+
+## Server Deployment (Railway)
+
+WebSocket relay server: `rangisutton/table_soccer_server` on GitHub.
+Hosted on Railway — auto-deploys on push to master.
+
+Live: wss://tablesoccerserver-production.up.railway.app
+
+The client reads `VITE_WS_URL` at build time (set in `.env.production`).
+Falls back to `ws://localhost:3001` in dev.
