@@ -36,7 +36,13 @@
       "Bash(grep -v \"Binary\\\\|//\")",
       "Bash(grep -l \"export const\" u:/rs_dev/table_soccer/src/levels/*.ts)",
       "Bash(python3 -c ':*)",
-      "Bash(node -e ':*)"
+      "Bash(node -e ':*)",
+      "Read(//u/rs_dev/table_soccer_server/**)",
+      "Bash(ls u:/rs_dev/table_soccer_server/*.ts u:/rs_dev/table_soccer_server/*.js)",
+      "Bash(ls u:/rs_dev/table_soccer/.env*)"
+    ],
+    "additionalDirectories": [
+      "u:\\rs_dev\\table_soccer_server\\src"
     ]
   }
 }
